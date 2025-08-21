@@ -40,7 +40,7 @@ async def get_blog_info(post_url):
                 likes = await like_locator_attempt2.inner_text(timeout=10000)
             except Exception as e_retry:
                 print(f"좋아요 수 가져오기 실패 (시도 2): {e_retry}")
-                likes = "좋아요 없음"
+                likes = 0
 
         try:
             # <span class="se_publishDate pcol2">2025. 7. 18. 16:21</span>
@@ -62,7 +62,7 @@ async def get_blog_info(post_url):
             comments = await comment_locator.inner_text()
         except Exception as e:
             print(f"댓글 수 가져오기 실패: {e}")
-            comments = "댓글 없음"
+            comments = 0
 
         await browser.close()
         
