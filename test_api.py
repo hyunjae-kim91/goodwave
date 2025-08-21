@@ -30,11 +30,11 @@ def test_root_endpoint():
         print(f"루트 엔드포인트 테스트 실패: {e}")
         return False
 
-def test_blog_info_api():
-    """블로그 정보 API 테스트"""
-    print("\n=== 블로그 정보 API 테스트 ===")
+def test_blog_info_api_postview():
+    """블로그 정보 API 테스트 - PostView 형태 URL"""
+    print("\n=== 블로그 정보 API 테스트 (PostView 형태) ===")
     
-    # 테스트할 네이버 블로그 URL
+    # 테스트할 네이버 블로그 URL (PostView 형태)
     test_url = "https://blog.naver.com/PostView.naver?blogId=1suhyeon&logNo=223938502707"
     
     payload = {
@@ -62,7 +62,59 @@ def test_blog_info_api():
             print(f"게시 날짜: {result['post_date']}")
             print(f"좋아요 수: {result['post_likes']}")
             print(f"댓글 수: {result['post_comments']}")
-            print(f"요청 URL: {result['url']}")
+            print(f"원본 URL: {result['url']}")
+            if result.get('converted_url'):
+                print(f"변환된 URL: {result['converted_url']}")
+            return True
+        else:
+            print(f"오류 응답: {response.text}")
+            return False
+            
+    except Exception as e:
+        print(f"블로그 정보 API 테스트 실패: {e}")
+        return False
+
+def test_blog_info_api_short():
+    """블로그 정보 API 테스트 - 짧은 형태 URL"""
+    print("\n=== 블로그 정보 API 테스트 (짧은 형태 URL) ===")
+    
+    # 테스트할 네이버 블로그 URL (짧은 형태)
+    test_url = "https://blog.naver.com/aaa2981/223951329398"
+    
+    payload = {
+        "url": test_url
+    }
+    
+    try:
+        print(f"요청 URL: {test_url}")
+        print("API 호출 중... (시간이 걸릴 수 있습니다)")
+        
+        start_time = time.time()
+        response = requests.post(
+            f"{BASE_URL}/blog-info",
+            json=payload,
+            timeout=180  # 3분 타임아웃
+        )
+        end_time = time.time()
+        
+        print(f"소요 시간: {end_time - start_time:.2f}초")
+        print(f"상태 코드: {response.status_code}")
+        
+        if response.status_code == 200:
+            result = response.json()
+            print("=== 블로그 정보 ===")
+            print(f"게시 날짜: {result['post_date']}")
+            print(f"좋아요 수: {result['post_likes']}")
+            print(f"댓글 수: {result['post_comments']}")
+            print(f"원본 URL: {result['url']}")
+            if result.get('converted_url'):
+                print(f"변환된 URL: {result['converted_url']}")
+                # 변환이 제대로 되었는지 확인
+                expected_converted = "https://blog.naver.com/PostView.naver?blogId=aaa2981&logNo=223951329398"
+                if result['converted_url'] == expected_converted:
+                    print("✅ URL 변환이 올바르게 수행되었습니다!")
+                else:
+                    print(f"⚠️ URL 변환 결과가 예상과 다릅니다. 예상: {expected_converted}")
             return True
         else:
             print(f"오류 응답: {response.text}")
@@ -105,7 +157,8 @@ def main():
         ("헬스 체크", test_health_check),
         ("루트 엔드포인트", test_root_endpoint),
         ("잘못된 URL", test_invalid_url),
-        ("블로그 정보 API", test_blog_info_api),
+        ("블로그 정보 API (PostView)", test_blog_info_api_postview),
+        ("블로그 정보 API (짧은 형태)", test_blog_info_api_short),
     ]
     
     results = []

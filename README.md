@@ -8,16 +8,40 @@
   - 게시 날짜
   - 좋아요 수
   - 댓글 수
+- **다양한 URL 형태 자동 지원**:
+  - 짧은 형태: `https://blog.naver.com/blogId/logNo`
+  - PostView 형태: `https://blog.naver.com/PostView.naver?blogId=xxx&logNo=xxx`
+
+## 지원하는 URL 형태
+
+### 1. 짧은 형태 URL (자동 변환)
+```
+https://blog.naver.com/aaa2981/223951329398
+↓ 자동 변환
+https://blog.naver.com/PostView.naver?blogId=aaa2981&logNo=223951329398
+```
+
+### 2. PostView 형태 URL (직접 사용)
+```
+https://blog.naver.com/PostView.naver?blogId=aaa2981&logNo=223951329398
+```
 
 ## API 엔드포인트
 
 ### POST /blog-info
 네이버 블로그 포스트 정보를 가져옵니다.
 
-**요청 예시:**
+**요청 예시 (짧은 형태):**
 ```json
 {
-  "url": "https://blog.naver.com/PostView.naver?blogId=example&logNo=123456789"
+  "url": "https://blog.naver.com/aaa2981/223951329398"
+}
+```
+
+**요청 예시 (PostView 형태):**
+```json
+{
+  "url": "https://blog.naver.com/PostView.naver?blogId=aaa2981&logNo=223951329398"
 }
 ```
 
@@ -27,9 +51,17 @@
   "post_date": "2025-01-18",
   "post_likes": "18",
   "post_comments": "2",
-  "url": "https://blog.naver.com/PostView.naver?blogId=example&logNo=123456789"
+  "url": "https://blog.naver.com/aaa2981/223951329398",
+  "converted_url": "https://blog.naver.com/PostView.naver?blogId=aaa2981&logNo=223951329398"
 }
 ```
+
+**응답 필드 설명:**
+- `post_date`: 게시 날짜 (YYYY-MM-DD 형식)
+- `post_likes`: 좋아요 수
+- `post_comments`: 댓글 수
+- `url`: 요청한 원본 URL
+- `converted_url`: 변환된 URL (짧은 형태를 사용했을 때만 포함)
 
 ### GET /health
 API 상태를 확인합니다.
@@ -52,7 +84,11 @@ uvicorn main:app --reload
 
 ### 3. 테스트
 ```bash
+# 전체 API 테스트
 python test_api.py
+
+# URL 변환 기능만 테스트
+python test_url_conversion.py
 ```
 
 ## Docker 배포
@@ -84,7 +120,7 @@ chmod +x deploy.sh
 ```bash
 # Docker 설치
 sudo apt update
-sudo apt install -y docker.io docker-compose
+sudo apt install -y docker.io docker-compose-plugin
 
 # Docker 서비스 시작
 sudo systemctl start docker
@@ -129,6 +165,13 @@ http://your-ec2-ip:8000
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 
+## 주요 특징
+
+- **URL 자동 변환**: 짧은 형태의 네이버 블로그 URL을 자동으로 PostView 형태로 변환
+- **다양한 형태 지원**: 기존 PostView URL과 새로운 짧은 형태 URL 모두 지원
+- **상세한 응답**: 원본 URL과 변환된 URL 정보를 모두 제공
+- **Docker 최적화**: Playwright 전용 Docker 이미지 사용으로 안정성 향상
+
 ## 주의사항
 
 - 네이버 블로그 URL만 지원됩니다
@@ -154,4 +197,12 @@ docker run -m 2g -p 8000:8000 goodwave-blog-api
 ```bash
 # deploy.sh 실행 권한 부여
 chmod +x deploy.sh
-``` 
+```
+
+## 업데이트 내역
+
+### v1.1.0
+- ✨ 짧은 형태 네이버 블로그 URL 지원 추가
+- 🔄 URL 자동 변환 기능 구현
+- 📝 응답에 변환된 URL 정보 추가
+- 🧪 URL 변환 테스트 추가 

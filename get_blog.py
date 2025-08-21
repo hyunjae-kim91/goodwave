@@ -74,7 +74,7 @@ async def get_blog_info(post_url):
         }
 
 async def main():
-    post_url = "https://blog.naver.com/PostView.naver?blogId=1suhyeon&logNo=223938502707"
+    post_url = "https://blog.naver.com/1suhyeon/223938502707"
     blog_info = await get_blog_info(post_url)
     
     print(f"날짜: {blog_info['post_date']}")
