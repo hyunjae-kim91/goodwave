@@ -141,3 +141,6 @@ task-definition.json
 .claude
 CLAUDE.md
 
+# Ignore node_modules
+frontend/node_modules/
+
