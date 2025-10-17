@@ -160,8 +160,9 @@ class CampaignBlog(Base):
     likes_count = Column(Integer, default=0)
     comments_count = Column(Integer, default=0)
     daily_visitors = Column(Integer, default=0)
-    # NOTE: keyword/ranking columns kept for backward compatibility but rankings are stored in campaign_blog_rankings
-    keyword = Column(String(255))
+    # DEPRECATED: These columns are kept for backward compatibility only
+    # Use rankings relationship for current ranking data
+    keyword = Column(String(255))  
     ranking = Column(Integer)
     product = Column(String(255))
     posted_at = Column(DateTime)

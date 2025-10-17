@@ -33,30 +33,64 @@ echo "   Goodwave Report 시스템 설정 및 실행"
 echo "======================================${NC}"
 echo ""
 
-# 1. Docker 설치 확인
-log_info "Docker 설치 상태 확인..."
+# 1. 시스템 업데이트 및 기본 패키지 설치
+log_info "시스템 업데이트 및 기본 패키지 설치..."
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl gnupg lsb-release apt-transport-https software-properties-common
+
+# 2. Docker 설치
+log_info "Docker 설치 확인 및 설치..."
 if ! command -v docker &> /dev/null; then
-    log_warning "Docker가 설치되어 있지 않습니다. 설치를 진행합니다..."
-    chmod +x install_docker.sh
-    ./install_docker.sh
+    log_info "Docker 설치 중..."
     
-    log_warning "Docker 설치가 완료되었습니다. 권한 적용을 위해 다음을 실행하세요:"
-    echo "newgrp docker"
-    echo "그 후 다시 이 스크립트를 실행하세요: ./setup_and_run.sh"
-    exit 0
+    # Docker GPG 키 추가
+    curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    
+    # Docker 저장소 추가
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+    
+    # Docker 설치
+    sudo apt-get update
+    sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    
+    # 사용자를 docker 그룹에 추가
+    sudo usermod -aG docker $USER
+    
+    # Docker 서비스 시작
+    sudo systemctl start docker
+    sudo systemctl enable docker
+    
+    log_success "Docker 설치 완료"
 else
     log_success "Docker가 이미 설치되어 있습니다."
 fi
 
-# Docker Compose 설치 확인
+# 3. Docker Compose 설치 (별도)
+log_info "Docker Compose 설치..."
 if ! command -v docker-compose &> /dev/null; then
-    log_error "Docker Compose가 설치되어 있지 않습니다. install_docker.sh를 먼저 실행하세요."
-    exit 1
+    DOCKER_COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/latest | grep -Po '"tag_name": "\K.*?(?=")')
+    sudo curl -L "https://github.com/docker/compose/releases/download/${DOCKER_COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+    sudo chmod +x /usr/local/bin/docker-compose
+    log_success "Docker Compose 설치 완료"
 else
-    log_success "Docker Compose가 설치되어 있습니다."
+    log_success "Docker Compose가 이미 설치되어 있습니다."
 fi
 
-# 2. 환경 변수 파일 확인
+# 4. Node.js 설치
+log_info "Node.js 설치..."
+if ! command -v node &> /dev/null; then
+    curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+    sudo apt-get install -y nodejs
+    log_success "Node.js 설치 완료"
+else
+    log_success "Node.js가 이미 설치되어 있습니다."
+fi
+
+# 5. Python 3 설치 확인
+log_info "Python 설치 확인..."
+sudo apt-get install -y python3 python3-pip python3-venv
+
+# 6. 환경 변수 파일 확인
 log_info "환경 변수 파일 확인..."
 if [ ! -f ".env" ]; then
     log_error ".env 파일이 없습니다. 파일을 생성하고 필요한 환경 변수를 설정하세요."
@@ -65,19 +99,29 @@ else
     log_success ".env 파일이 존재합니다."
 fi
 
-# 3. 필요한 디렉토리 생성
+# 7. 필요한 디렉토리 생성
 log_info "필요한 디렉토리 생성..."
 mkdir -p backend/static
 mkdir -p backend/logs
 log_success "디렉토리 생성 완료"
 
-# 4. 기존 컨테이너 정리
+# 8. Docker 권한 확인
+log_info "Docker 권한 확인..."
+if ! docker ps &> /dev/null; then
+    log_warning "Docker 권한이 없습니다. 다음 중 하나를 실행하세요:"
+    echo "  1) newgrp docker"
+    echo "  2) 로그아웃 후 다시 로그인"
+    echo "그 후 다시 이 스크립트를 실행하세요."
+    exit 0
+fi
+
+# 9. 기존 컨테이너 정리
 log_info "기존 컨테이너 정리..."
 docker-compose down --remove-orphans || true
 docker system prune -f || true
 log_success "컨테이너 정리 완료"
 
-# 5. Docker 이미지 빌드 및 컨테이너 시작
+# 10. Docker 이미지 빌드 및 컨테이너 시작
 log_info "Docker 이미지 빌드 및 컨테이너 시작..."
 log_info "이 과정은 몇 분이 소요될 수 있습니다..."
 
@@ -148,11 +192,7 @@ while ! curl -f http://localhost:3000 &> /dev/null; do
 done
 log_success "프론트엔드 서비스 시작 성공!"
 
-# 6. 서비스 상태 확인
-log_info "전체 서비스 상태 확인..."
-docker-compose ps
-
-# 7. 데이터베이스 테이블 생성
+# 11. 데이터베이스 테이블 생성
 log_info "데이터베이스 테이블 생성..."
 docker-compose exec -T backend python -c "
 from app.db.models import Base
@@ -165,30 +205,16 @@ except Exception as e:
     exit(1)
 "
 
-# 8. 간단한 API 테스트
+# 12. 서비스 상태 확인
+log_info "전체 서비스 상태 확인..."
+docker-compose ps
+
+# 13. API 테스트
 log_info "API 엔드포인트 테스트..."
 if curl -f http://localhost:8000/health &> /dev/null; then
     log_success "백엔드 API 정상 작동"
 else
     log_warning "백엔드 API 응답 없음"
-fi
-
-if curl -f http://localhost:8000/api/campaigns/ &> /dev/null; then
-    log_success "캠페인 API 정상 작동"
-else
-    log_warning "캠페인 API 응답 없음 (정상 - 빈 데이터)"
-fi
-
-# 9. Cron 작업 설정 (선택사항)
-log_info "자동 데이터 수집 스케줄 설정..."
-if [ -f "backend/setup_cron.sh" ]; then
-    cd backend
-    chmod +x setup_cron.sh
-    ./setup_cron.sh
-    cd ..
-    log_success "Cron 작업 설정 완료"
-else
-    log_warning "Cron 설정 파일을 찾을 수 없습니다."
 fi
 
 # 성공 메시지 출력
@@ -216,3 +242,9 @@ echo "🛑 서비스 종료:      docker-compose down"
 echo "🔄 서비스 재시작:    docker-compose restart [서비스명]"
 echo ""
 echo -e "${GREEN}✨ 시스템이 성공적으로 시작되었습니다!${NC}"
+echo ""
+echo -e "${BLUE}설치된 버전:${NC}"
+docker --version
+docker-compose --version
+node --version
+python3 --version
