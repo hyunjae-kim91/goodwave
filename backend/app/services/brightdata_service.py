@@ -126,6 +126,200 @@ class BrightDataService:
         logger.info(f"🎉 배치 수집 완료: {len(results)}개 결과")
         return results
     
+    async def _collect_single_data_type(self, url: str, username: str, data_type: str, max_retries: int = 2) -> Dict[str, Any]:
+        """단일 데이터 타입(profile 또는 reels)을 개별적으로 수집합니다. 재시도 로직 포함."""
+        logger.info(f"🌐 BrightData API {data_type} 수집: {username} ({url})")
+        
+        for attempt in range(max_retries + 1):
+            try:
+                if attempt > 0:
+                    logger.info(f"🔄 {data_type} 수집 재시도 {attempt}/{max_retries}: {username}")
+                    # 재시도 시 잠시 대기
+                    await asyncio.sleep(5)
+                
+                # brightdata.json에서 설정 로드
+                import json
+                from pathlib import Path
+                
+                config_path = Path(__file__).parent.parent.parent / "brightdata.json"
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        brightdata_config = json.load(f)
+                except (FileNotFoundError, json.JSONDecodeError) as e:
+                    logger.error(f"❌ 설정 파일 로드 실패: {str(e)}")
+                    if attempt == max_retries:
+                        return {}
+                    continue
+                
+                instagram_config = brightdata_config.get("instagram", {})
+                
+                if data_type == "profile":
+                    config = instagram_config.get("profile", {})
+                    input_data = [{"url": url}]
+                elif data_type == "reels":
+                    config = instagram_config.get("reel", {})
+                    input_data = [{
+                        "url": url,
+                        "num_of_posts": 24,
+                        "start_date": "",
+                        "end_date": now_kst().strftime("%m-%d-%Y")
+                    }]
+                else:
+                    logger.error(f"지원하지 않는 데이터 타입: {data_type}")
+                    return {}
+                
+                dataset_id = config.get("dataset_id")
+                params = config.get("params", {})
+                
+                if not dataset_id:
+                    logger.error(f"{data_type} 데이터셋 ID가 설정되지 않음")
+                    return {}
+                
+                # 스냅샷 요청 (재시도 시 더 강력한 오류 처리)
+                try:
+                    snapshot_id = self.instagram_api.trigger_snapshot_request(
+                        dataset_id=dataset_id,
+                        params=params,
+                        data=input_data
+                    )
+                except Exception as snapshot_error:
+                    logger.error(f"❌ 스냅샷 요청 실패 ({attempt+1}/{max_retries+1}): {str(snapshot_error)}")
+                    if attempt == max_retries:
+                        return {}
+                    continue
+                
+                if not snapshot_id:
+                    logger.error(f"❌ {data_type} 스냅샷 ID를 받지 못함 ({attempt+1}/{max_retries+1})")
+                    if attempt == max_retries:
+                        return {}
+                    continue
+                    
+                logger.info(f"✅ {data_type} 스냅샷 ID: {snapshot_id}")
+                
+                # 스냅샷 완료 대기 (타임아웃 처리)
+                try:
+                    raw_data = self.instagram_api.wait_for_snapshot(snapshot_id, data_type)
+                except Exception as wait_error:
+                    logger.error(f"❌ 스냅샷 대기 실패 ({attempt+1}/{max_retries+1}): {str(wait_error)}")
+                    if attempt == max_retries:
+                        return {}
+                    continue
+                
+                if not raw_data:
+                    logger.error(f"❌ {data_type} 스냅샷 데이터가 비어있음 ({attempt+1}/{max_retries+1})")
+                    if attempt == max_retries:
+                        # 마지막 재시도에서도 실패하면 기본 데이터 반환
+                        if data_type == "profile":
+                            profile_data = self._create_default_profile(username)
+                            return {"profile": profile_data}
+                        return {}
+                    continue
+                
+                # 원시 데이터 상태 로깅
+                logger.info(f"🔍 {data_type} 원시 데이터 타입: {type(raw_data)}")
+                
+                # raw_data가 리스트인지 확인
+                if isinstance(raw_data, list):
+                    logger.info(f"🔍 {data_type} 원시 데이터 분석: 총 {len(raw_data)}개 항목")
+                    # 처음 3개만 로깅 (안전하게)
+                    for i in range(min(3, len(raw_data))):
+                        item = raw_data[i]
+                        logger.info(f"  [{i}] 타입: {type(item)}, 내용: {str(item)[:200]}")
+                    
+                    # 유효한 딕셔너리 데이터가 있는지 확인
+                    valid_items = [item for item in raw_data if isinstance(item, dict)]
+                    logger.info(f"📊 유효한 딕셔너리 데이터: {len(valid_items)}/{len(raw_data)}개")
+                else:
+                    logger.info(f"🔍 {data_type} 원시 데이터가 리스트가 아님: {str(raw_data)[:200]}")
+                    # raw_data가 딕셔너리인 경우 리스트로 변환
+                    if isinstance(raw_data, dict):
+                        raw_data = [raw_data]
+                        logger.info(f"🔄 딕셔너리를 리스트로 변환: {len(raw_data)}개 항목")
+                    else:
+                        logger.error(f"❌ 예상하지 못한 데이터 타입: {type(raw_data)}")
+                        if attempt == max_retries:
+                            return {}
+                        continue
+                
+                # 데이터 파싱
+                if data_type == "profile":
+                    profile_data = None
+                    for item in raw_data:
+                        # 타입 검증 추가
+                        if not isinstance(item, dict):
+                            logger.warning(f"⚠️ 프로필 데이터 타입 스킵: {type(item)} - {str(item)[:100]}")
+                            continue
+                        profile_data = self._extract_profile_from_item(item, username)
+                        if profile_data:
+                            break
+                    
+                    # 프로필 데이터가 없으면 기본 프로필 생성
+                    if not profile_data:
+                        logger.warning(f"⚠️ {username} 프로필 데이터 추출 실패 - 기본 프로필 생성")
+                        profile_data = self._create_default_profile(username)
+                    
+                    logger.info(f"✅ {data_type} 수집 성공: {username}")
+                    return {"profile": profile_data}
+                
+                elif data_type == "reels":
+                    reels_data = []
+                    processed_items = 0
+                    
+                    for item in raw_data:
+                        # 타입 검증 추가
+                        if not isinstance(item, dict):
+                            logger.warning(f"⚠️ 릴스 데이터 타입 스킵: {type(item)} - {str(item)[:100]}")
+                            continue
+                        
+                        processed_items += 1
+                        try:
+                            if self._is_reel_item(item):
+                                reel = self._extract_reel_from_item(item, username)
+                                if reel:
+                                    reels_data.append(reel)
+                        except Exception as item_error:
+                            logger.warning(f"⚠️ 릴스 아이템 처리 오류: {str(item_error)}")
+                            continue
+                    
+                    logger.info(f"📊 {data_type} 처리 완료: 처리된 아이템 {processed_items}개, 릴스 {len(reels_data)}개")
+                    
+                    # 절대로 테스트 데이터를 생성하지 않음 (명시적 금지)
+                    if not reels_data:
+                        logger.warning(f"⚠️ {username} 실제 릴스 데이터가 없음 - 테스트 데이터 생성하지 않음")
+                        reels_data = []
+                    
+                    logger.info(f"✅ {data_type} 수집 성공: {username} - {len(reels_data)}개 릴스")
+                    return {"reels": reels_data}
+                
+            except asyncio.TimeoutError:
+                logger.error(f"⏰ {data_type} 수집 타임아웃 ({attempt+1}/{max_retries+1}): {username}")
+                if attempt == max_retries:
+                    # 타임아웃이지만 기본 데이터라도 반환
+                    if data_type == "profile":
+                        profile_data = self._create_default_profile(username)
+                        return {"profile": profile_data}
+                    return {}
+                continue
+                
+            except Exception as e:
+                import traceback
+                logger.error(f"❌ {data_type} 수집 실패 ({attempt+1}/{max_retries+1}): {str(e)}")
+                logger.error(f"❌ 스택 트레이스: {traceback.format_exc()}")
+                if attempt == max_retries:
+                    # 모든 재시도 실패 시 기본 데이터 반환
+                    if data_type == "profile":
+                        profile_data = self._create_default_profile(username)
+                        return {"profile": profile_data}
+                    return {}
+                continue
+        
+        # 이 지점에 도달하면 모든 재시도 실패
+        logger.error(f"💥 {data_type} 수집 완전 실패: {username}")
+        if data_type == "profile":
+            profile_data = self._create_default_profile(username)
+            return {"profile": profile_data}
+        return {}
+
     async def _collect_profile_with_brightdata(self, url: str, username: str, options: Dict[str, bool] = None, session_id: str = None) -> Dict[str, Any]:
         """실제 BrightData API를 사용하여 프로필, 게시물, 릴스를 모두 수집합니다."""
         logger.info(f"🌐 BrightData API 프로필 + 게시물 + 릴스 수집: {username} ({url})")
@@ -151,20 +345,7 @@ class BrightDataService:
                     profile_data = [{"url": url}]
                     collection_tasks.append(("profile", profile_config, profile_data))
             
-            # 2. 게시물 데이터 수집 (프로필 URL을 사용하여 최신 게시물들 수집)
-            if options is None or options.get("collectPosts", True):
-                post_config = instagram_config.get("post", {})
-                if post_config.get("dataset_id"):
-                    # BrightData API 요구 형식에 맞춰 게시물 수집 파라미터 구성
-                    posts_data = [{
-                        "url": url,
-                        "num_of_posts": 24,
-                        "post_type": "Post",
-                        "start_date": "",
-                        "end_date": now_kst().strftime("%m-%d-%Y"),
-                        "posts_to_not_include": ""
-                    }]
-                    collection_tasks.append(("posts", post_config, posts_data))
+            # 게시물 수집 비활성화됨
             
             # 3. 릴스 데이터 수집 (프로필 URL을 사용하여 최신 릴스들 수집)  
             if options is None or options.get("collectReels", True):
@@ -290,15 +471,12 @@ class BrightDataService:
             if not collected_data["profile"]:
                 collected_data["profile"] = self._create_default_profile(username)
             
-            # 임시: 게시물과 릴스 데이터가 없으면 테스트 데이터 생성 (개발/테스트 목적)
-            if len(collected_data["posts"]) == 0 and len(collected_data["reels"]) == 0:
-                logger.info(f"📝 실제 게시물/릴스 데이터가 없어 테스트 데이터 생성 중...")
-                test_data = await self._create_test_data(url, username, {"collectProfile": False, "collectPosts": True, "collectReels": True})
-                collected_data["posts"] = test_data.get("posts", [])
-                collected_data["reels"] = test_data.get("reels", [])
-                logger.info(f"📝 테스트 데이터 추가: 게시물={len(collected_data['posts'])}개, 릴스={len(collected_data['reels'])}개")
+            # 절대로 테스트 데이터를 생성하지 않음 (명시적 금지)
+            if len(collected_data["reels"]) == 0:
+                logger.info(f"⚠️ 실제 릴스 데이터가 없음 - 테스트 데이터 생성하지 않음")
+                collected_data["reels"] = []
             
-            logger.info(f"🎉 통합 수집 완료: 프로필={1 if collected_data['profile'] else 0}, 게시물={len(collected_data['posts'])}, 릴스={len(collected_data['reels'])}")
+            logger.info(f"🎉 통합 수집 완료: 프로필={1 if collected_data['profile'] else 0}, 릴스={len(collected_data['reels'])}")
             return collected_data
             
         except Exception as e:
@@ -319,6 +497,11 @@ class BrightDataService:
         # BrightData Instagram 데이터 파싱
         for idx, item in enumerate(raw_data):
             try:
+                # 데이터 타입 검증 - 문자열인 경우 스킵
+                if not isinstance(item, dict):
+                    logger.warning(f"⚠️ [{idx+1}/{len(raw_data)}] 잘못된 데이터 타입 스킵: {type(item)} - {str(item)[:100]}")
+                    continue
+                
                 logger.info(f"🔍 [{idx+1}/{len(raw_data)}] 아이템 처리: {list(item.keys())}")
                 
                 # 프로필 정보 추출 (보통 첫 번째 아이템에 있음)
@@ -357,6 +540,12 @@ class BrightDataService:
     def _extract_profile_from_item(self, item: Dict, username: str) -> Optional[Dict]:
         """아이템에서 프로필 정보를 추출합니다."""
         try:
+            # 데이터 타입 검증
+            if not isinstance(item, dict):
+                logger.warning(f"⚠️ 프로필 추출 스킵: 딕셔너리가 아닌 데이터 타입 {type(item)}")
+                return None
+                
+                
             # BrightData Instagram 데이터 구조에 맞춰 프로필 정보 추출
             profile = {
                 "username": item.get("user_posted") or item.get("username") or username,
@@ -376,9 +565,14 @@ class BrightDataService:
                 "is_verified": item.get("is_verified", False)
             }
             
-            # 유효한 데이터가 있는지 확인
-            if profile["username"] and (profile["followers"] > 0 or profile["full_name"]):
-                logger.info(f"👤 프로필 추출 성공: {profile['username']}")
+            # 유효한 데이터가 있는지 확인 (더 관대한 검증)
+            # username이 있거나, 최소한 full_name이 있으면 유효한 프로필로 간주
+            if profile["username"] or profile["full_name"]:
+                # username이 없으면 URL에서 추출한 username 사용
+                if not profile["username"]:
+                    profile["username"] = username
+                    
+                logger.info(f"👤 프로필 추출 성공: {profile['username']} (팔로워: {profile['followers']})")
                 return profile
             else:
                 logger.info(f"⚠️ 프로필 데이터 불완전: {profile}")
@@ -390,12 +584,16 @@ class BrightDataService:
     
     def _is_post_item(self, item: Dict) -> bool:
         """아이템이 일반 게시물인지 확인합니다."""
+        if not isinstance(item, dict):
+            return False
         media_type = item.get("media_type", "").lower()
         content_type = item.get("content_type", "").lower()
         return media_type in ["image", "photo", "carousel"] or content_type == "post" or "post" in str(item.get("url", ""))
     
     def _is_reel_item(self, item: Dict) -> bool:
         """아이템이 릴스인지 확인합니다."""
+        if not isinstance(item, dict):
+            return False
         media_type = item.get("media_type", "").lower()
         content_type = item.get("content_type", "").lower()
         return media_type == "video" or content_type == "reel" or "reel" in str(item.get("url", ""))
@@ -403,6 +601,10 @@ class BrightDataService:
     def _extract_post_from_item(self, item: Dict, username: str) -> Optional[Dict]:
         """아이템에서 게시물 정보를 추출합니다."""
         try:
+            # 데이터 타입 검증
+            if not isinstance(item, dict):
+                logger.warning(f"⚠️ 게시물 추출 스킵: 딕셔너리가 아닌 데이터 타입 {type(item)}")
+                return None
             # 더 포괄적인 필드 매핑을 위한 헬퍼 함수
             def get_field_value(item, *field_names):
                 for field in field_names:
@@ -454,6 +656,11 @@ class BrightDataService:
     def _extract_reel_from_item(self, item: Dict, username: str) -> Optional[Dict]:
         """아이템에서 릴스 정보를 추출합니다."""
         try:
+            # 데이터 타입 검증
+            if not isinstance(item, dict):
+                logger.warning(f"⚠️ 릴스 추출 스킵: 딕셔너리가 아닌 데이터 타입 {type(item)}")
+                return None
+                
             # 더 포괄적인 필드 매핑을 위한 헬퍼 함수
             def get_field_value(item, *field_names):
                 for field in field_names:

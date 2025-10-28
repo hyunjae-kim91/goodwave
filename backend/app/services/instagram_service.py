@@ -123,36 +123,45 @@ class InstagramService:
     async def collect_user_reels_thumbnails(self, username: str, limit: int = 24) -> List[Dict[str, Any]]:
         """사용자의 릴스 썸네일 이미지 24개 수집"""
         try:
-            if not hasattr(self, 'base_url') or not self.base_url:
-                print(f"Base URL not configured for API requests")
-                return []
-                
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
+            profile_url = f"https://www.instagram.com/{username}/"
+            print(f"🎬 사용자 릴스 수집 시작: {profile_url}")
+            
+            # BrightData 서비스를 사용하여 프로필 데이터 수집
+            from .brightdata_service import BrightDataService
+            brightdata_service = BrightDataService()
+            
+            # 프로필 + 릴스 수집 옵션
+            options = {
+                "collect_profile": True,
+                "collect_posts": False,
+                "collect_reels": True
             }
             
-            payload = {
-                'username': username,
-                'limit': limit,
-                'media_type': 'reel'
-            }
+            results = await brightdata_service.collect_instagram_data_batch([profile_url], options)
             
-            response = requests.post(
-                f"{self.base_url}/instagram/user/reels",
-                headers=headers,
-                json=payload
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if not data or not isinstance(data, dict):
-                    print(f"Invalid response data for user reels: {username}")
-                    return []
-                return await self._process_user_reels(data, username)
-            else:
-                print(f"Error fetching user reels: {response.status_code}")
+            if not results or len(results) == 0:
+                print(f"No data received for {username}")
                 return []
+            
+            result = results[0]
+            reels = result.get('reels', [])
+            
+            if not reels:
+                print(f"No reels found for {username}")
+                return []
+            
+            processed_reels = []
+            for reel in reels[:limit]:  # limit 적용
+                try:
+                    processed_reel = await self._process_instagram_reel(reel)
+                    if processed_reel:
+                        processed_reels.append(processed_reel)
+                except Exception as e:
+                    print(f"Error processing reel for {username}: {str(e)}")
+                    continue
+            
+            print(f"✅ 처리된 릴스 수: {len(processed_reels)}개")
+            return processed_reels
                 
         except Exception as e:
             print(f"Error in collect_user_reels_thumbnails: {str(e)}")

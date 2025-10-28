@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
+import { useNavigate } from 'react-router-dom';
 import { adminApi } from '../services/api';
 import { AdminDashboard as AdminDashboardType } from '../types';
 
@@ -78,7 +79,33 @@ const Loading = styled.div`
   color: #7f8c8d;
 `;
 
+const ReportButton = styled.button`
+  background-color: #3498db;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+  margin-right: 0.5rem;
+  
+  &:hover {
+    background-color: #2980b9;
+  }
+  
+  &:disabled {
+    background-color: #bdc3c7;
+    cursor: not-allowed;
+  }
+`;
+
+const ButtonGroup = styled.div`
+  display: flex;
+  gap: 0.5rem;
+`;
+
 const AdminDashboard: React.FC = () => {
+  const navigate = useNavigate();
   const [dashboardData, setDashboardData] = useState<AdminDashboardType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,6 +125,23 @@ const AdminDashboard: React.FC = () => {
       console.error('Error fetching dashboard data:', err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleViewReport = (campaignName: string, campaignType: string) => {
+    // 캠페인 이름을 URL에 적합한 형태로 변환
+    const encodedCampaignName = encodeURIComponent(campaignName);
+    
+    // 캠페인 타입에 따라 적절한 보고서 페이지로 이동
+    switch (campaignType) {
+      case 'instagram_reel':
+        navigate(`/reports/instagram/reels/${encodedCampaignName}`);
+        break;
+      case 'blog':
+        navigate(`/reports/blogs/${encodedCampaignName}`);
+        break;
+      default:
+        console.warn('Unknown campaign type:', campaignType);
     }
   };
 
@@ -142,6 +186,7 @@ const AdminDashboard: React.FC = () => {
               <TableHeader>유형</TableHeader>
               <TableHeader>광고비</TableHeader>
               <TableHeader>기간</TableHeader>
+              <TableHeader>작업</TableHeader>
             </tr>
           </thead>
           <tbody>
@@ -153,6 +198,15 @@ const AdminDashboard: React.FC = () => {
                 <TableCell>{campaign.budget.toLocaleString()}원</TableCell>
                 <TableCell>
                   {new Date(campaign.start_date).toLocaleDateString()} ~ {new Date(campaign.end_date).toLocaleDateString()}
+                </TableCell>
+                <TableCell>
+                  <ButtonGroup>
+                    <ReportButton 
+                      onClick={() => handleViewReport(campaign.name, campaign.campaign_type)}
+                    >
+                      📊 보고서 보기
+                    </ReportButton>
+                  </ButtonGroup>
                 </TableCell>
               </tr>
             ))}

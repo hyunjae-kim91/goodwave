@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import styled from 'styled-components';
 import toast from 'react-hot-toast';
-import { Download, Loader2, CheckCircle, XCircle, Users, Activity, User, Video, RefreshCcw, Trash2 } from 'lucide-react';
+import { Download, Loader2, CheckCircle, XCircle, Users, Activity, User, Video, RefreshCcw, Trash2, Square, StopCircle } from 'lucide-react';
 import { useAppStore } from '../../store/influencer/useAppStore';
 import { influencerApi } from '../../services/influencer/influencerApi';
+import { adminApi } from '../../services/api';
 
 const Section = styled.div`
   background: white;
@@ -429,6 +430,31 @@ const RefreshButton = styled.button`
   }
 `;
 
+const RetryButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: #28a745;
+  border: 1px solid #28a745;
+  border-radius: 4px;
+  color: white;
+  cursor: pointer;
+
+  &:hover {
+    background: #218838;
+    border-color: #1e7e34;
+  }
+
+  &:disabled {
+    background: #6c757d;
+    border-color: #6c757d;
+    cursor: not-allowed;
+  }
+`;
+
 const QueueActions = styled.div`
   display: inline-flex;
   align-items: center;
@@ -450,6 +476,58 @@ const DeleteButton = styled.button`
 
   &:hover {
     background: #ffe3e3;
+  }
+
+  &:disabled {
+    background: #f8f9fa;
+    border-color: #dee2e6;
+    color: #adb5bd;
+    cursor: not-allowed;
+  }
+`;
+
+const StopButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: #ffeaa7;
+  border: 1px solid #fdcb6e;
+  border-radius: 4px;
+  color: #e17055;
+  cursor: pointer;
+
+  &:hover {
+    background: #fab1a0;
+    border-color: #e17055;
+  }
+
+  &:disabled {
+    background: #f8f9fa;
+    border-color: #dee2e6;
+    color: #adb5bd;
+    cursor: not-allowed;
+  }
+`;
+
+const StopAllButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  background: #ff7675;
+  border: 1px solid #d63031;
+  border-radius: 4px;
+  color: white;
+  cursor: pointer;
+
+  &:hover {
+    background: #d63031;
+    border-color: #74b9ff;
   }
 
   &:disabled {
@@ -607,14 +685,12 @@ interface CollectionStatus {
   currentUrl?: string;
   progress: {
     profile: ProgressDetail;
-    posts: ProgressDetail;
     reels: ProgressDetail;
   };
 }
 
 interface CollectionOptions {
   collectProfile: boolean;
-  collectPosts: boolean;
   collectReels: boolean;
 }
 
@@ -637,10 +713,8 @@ interface CollectionJobItem {
   username: string;
   status: JobStatus;
   profile_status: StepStatus | string;
-  posts_status: StepStatus | string;
   reels_status: StepStatus | string;
   profile_count?: number;
-  posts_count?: number;
   reels_count?: number;
   error_message?: string;
   created_at: string;
@@ -665,7 +739,6 @@ const IngestTab: React.FC = () => {
   const [showModal, setShowModal] = useState(false);
   const [collectionOptions, setCollectionOptions] = useState<CollectionOptions>({
     collectProfile: true,
-    collectPosts: false,
     collectReels: true
   });
   const [collectionStatus, setCollectionStatus] = useState<CollectionStatus>({
@@ -677,7 +750,6 @@ const IngestTab: React.FC = () => {
     results: [],
     progress: {
       profile: { status: 'pending', completed: 0, total: 0 },
-      posts: { status: 'pending', completed: 0, total: 0 },
       reels: { status: 'pending', completed: 0, total: 0 }
     }
   });
@@ -698,6 +770,9 @@ const IngestTab: React.FC = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [retryLoading, setRetryLoading] = useState(false);
+  const [stopLoading, setStopLoading] = useState(false);
+  const [stopAllLoading, setStopAllLoading] = useState(false);
   
   // SSE 연결 설정
   const setupSSE = (sessionId: string) => {
@@ -729,7 +804,7 @@ const IngestTab: React.FC = () => {
             break;
             
           case 'success':
-            setProgressLogs(prev => [...(Array.isArray(prev) ? prev : []), `[${timestamp}] ✅ ${data.data.message} - 게시물: ${data.data.posts_count}개, 릴스: ${data.data.reels_count}개`]);
+            setProgressLogs(prev => [...(Array.isArray(prev) ? prev : []), `[${timestamp}] ✅ ${data.data.message} - 릴스: ${data.data.reels_count}개`]);
             setCollectionStatus(prev => ({
               ...prev,
               successful: prev.successful + 1,
@@ -739,7 +814,7 @@ const IngestTab: React.FC = () => {
                 username: data.data.username,
                 success: true,
                 status: 'success',
-                message: `수집 성공: 게시물 ${data.data.posts_count}개, 릴스 ${data.data.reels_count}개`
+                message: `수집 성공: 릴스 ${data.data.reels_count}개`
               }]
             }));
             break;
@@ -762,7 +837,7 @@ const IngestTab: React.FC = () => {
             
             // 세부 진행상황 로그 추가
             const statusIcon = status === 'completed' ? '✅' : status === 'failed' ? '❌' : status === 'running' ? '🔄' : '⏳';
-            const dataTypeKorean = data_type === 'profile' ? '프로필' : data_type === 'posts' ? '게시물' : '릴스';
+            const dataTypeKorean = data_type === 'profile' ? '프로필' : '릴스';
             setProgressLogs(prev => [...(Array.isArray(prev) ? prev : []), `[${timestamp}] ${statusIcon} ${dataTypeKorean}: ${message || status}`]);
             break;
 
@@ -996,7 +1071,7 @@ const IngestTab: React.FC = () => {
     }
 
     // 최소 하나의 수집 옵션이 선택되었는지 확인
-    if (!collectionOptions.collectProfile && !collectionOptions.collectPosts && !collectionOptions.collectReels) {
+    if (!collectionOptions.collectProfile && !collectionOptions.collectReels) {
       toast.error('최소 하나의 수집 유형을 선택해주세요');
       return;
     }
@@ -1018,12 +1093,6 @@ const IngestTab: React.FC = () => {
             completed: collectionOptions.collectProfile ? 0 : 1, 
             total: 1,
             message: collectionOptions.collectProfile ? undefined : '선택되지 않음'
-          },
-          posts: { 
-            status: 'completed',
-            completed: 1,
-            total: 1,
-            message: '선택되지 않음'
           },
           reels: { 
             status: collectionOptions.collectReels ? 'pending' : 'completed', 
@@ -1165,6 +1234,108 @@ const IngestTab: React.FC = () => {
     }
   };
 
+  const handleRetrySelected = async () => {
+    if (selectedJobIds.length === 0) {
+      return;
+    }
+
+    // 선택된 작업 중 실패한 작업만 필터링
+    const failedJobs = jobsToRender.filter(job => 
+      selectedJobIds.includes(job.job_id) && normalizeJobStatus(job.status) === 'failed'
+    );
+
+    if (failedJobs.length === 0) {
+      toast.error('재실행할 수 있는 실패한 작업이 없습니다.');
+      return;
+    }
+
+    const confirmed = window.confirm(`선택한 ${failedJobs.length}개의 실패한 작업을 재실행하시겠습니까?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setRetryLoading(true);
+
+    try {
+      const response = await adminApi.retrySelectedInfluencerJobs(failedJobs.map(job => job.job_id));
+      
+      if (response.success) {
+        toast.success(`${response.retried_count}개의 작업이 재실행을 위해 큐에 추가되었습니다`);
+        setSelectedJobIds([]);
+        await refreshQueueData();
+      } else {
+        toast.error(response.message || '재실행 요청이 실패했습니다');
+      }
+    } catch (error: any) {
+      console.error('재실행 실패:', error);
+      toast.error(`재실행 중 오류가 발생했습니다: ${error.message}`);
+    } finally {
+      setRetryLoading(false);
+    }
+  };
+
+  const handleStopProcessingJobs = async () => {
+    const processingCount = jobSummary.processing;
+    if (processingCount === 0) {
+      toast.error('진행 중인 작업이 없습니다.');
+      return;
+    }
+
+    const confirmed = window.confirm(`진행 중인 ${processingCount}개의 작업을 중지하시겠습니까?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setStopLoading(true);
+
+    try {
+      const response = await adminApi.stopInfluencerProcessingJobs();
+      
+      if (response.success) {
+        toast.success(`${response.stopped_count}개의 진행 중인 작업이 중지되었습니다`);
+        await refreshQueueData();
+      } else {
+        toast.error(response.message || '작업 중지에 실패했습니다');
+      }
+    } catch (error: any) {
+      console.error('진행 중인 작업 중지 실패:', error);
+      toast.error(`작업 중지 중 오류가 발생했습니다: ${error.message}`);
+    } finally {
+      setStopLoading(false);
+    }
+  };
+
+  const handleStopAllJobs = async () => {
+    const totalActiveCount = jobSummary.processing + jobSummary.pending;
+    if (totalActiveCount === 0) {
+      toast.error('중지할 작업이 없습니다.');
+      return;
+    }
+
+    const confirmed = window.confirm(`워커를 중지하고 모든 활성 작업(진행 중 ${jobSummary.processing}개 + 대기 중 ${jobSummary.pending}개)을 중지하시겠습니까?`);
+    if (!confirmed) {
+      return;
+    }
+
+    setStopAllLoading(true);
+
+    try {
+      const response = await adminApi.stopAllInfluencerJobs();
+      
+      if (response.success) {
+        toast.success(`워커가 중지되고 ${response.stopped_count}개의 작업이 중지되었습니다`);
+        await refreshQueueData();
+      } else {
+        toast.error(response.message || '전체 중지에 실패했습니다');
+      }
+    } catch (error: any) {
+      console.error('전체 중지 실패:', error);
+      toast.error(`전체 중지 중 오류가 발생했습니다: ${error.message}`);
+    } finally {
+      setStopAllLoading(false);
+    }
+  };
+
   return (
     <div>
       <Section>
@@ -1185,6 +1356,14 @@ const IngestTab: React.FC = () => {
               </QueueFilterSelect>
             </QueueFilterGroup>
             <QueueActions>
+              <RetryButton
+                type="button"
+                onClick={handleRetrySelected}
+                disabled={!hasSelection || retryLoading}
+              >
+                <RefreshCcw size={16} />
+                {retryLoading ? '재실행 중...' : `선택 작업 재실행 (${selectedJobIds.length})`}
+              </RetryButton>
               <DeleteButton
                 type="button"
                 onClick={handleDeleteSelected}
@@ -1193,6 +1372,24 @@ const IngestTab: React.FC = () => {
                 <Trash2 size={16} />
                 {deleteLoading ? '삭제 중...' : `선택 삭제 (${selectedJobIds.length})`}
               </DeleteButton>
+              <StopButton
+                type="button"
+                onClick={handleStopProcessingJobs}
+                disabled={jobSummary.processing === 0 || stopLoading}
+                title={jobSummary.processing === 0 ? '진행 중인 작업이 없습니다' : `진행 중인 ${jobSummary.processing}개 작업 중지`}
+              >
+                <Square size={16} />
+                {stopLoading ? '중지 중...' : `진행 중지 (${jobSummary.processing})`}
+              </StopButton>
+              <StopAllButton
+                type="button"
+                onClick={handleStopAllJobs}
+                disabled={(jobSummary.processing + jobSummary.pending) === 0 || stopAllLoading}
+                title={(jobSummary.processing + jobSummary.pending) === 0 ? '중지할 작업이 없습니다' : `워커 및 모든 작업 중지`}
+              >
+                <StopCircle size={16} />
+                {stopAllLoading ? '전체 중지 중...' : '전체 중지'}
+              </StopAllButton>
               <RefreshButton type="button" onClick={handleRefreshClick} disabled={refreshing}>
                 <RefreshCcw size={16} style={refreshing ? { animation: 'spin 1s linear infinite' } : undefined} />
                 {refreshing ? '새로고침 중...' : '새로고침'}
@@ -1246,6 +1443,7 @@ const IngestTab: React.FC = () => {
                   <QueueHeadCell>작업 상태</QueueHeadCell>
                   <QueueHeadCell>프로필</QueueHeadCell>
                   <QueueHeadCell>릴스</QueueHeadCell>
+                  <QueueHeadCell>오류 정보</QueueHeadCell>
                 </tr>
               </thead>
               <tbody>
@@ -1302,12 +1500,45 @@ const IngestTab: React.FC = () => {
                             {job.profile_count}건 저장
                           </div>
                         )}
+                        {profileStatus === 'failed' && (
+                          <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#dc3545' }}>
+                            프로필 수집 실패
+                          </div>
+                        )}
                       </QueueCell>
                       <QueueCell>
                         <StatusPill status={reelsStatus}>{stepStatusLabelMap[reelsStatus]}</StatusPill>
                         {typeof job.reels_count === 'number' && job.reels_count > 0 && (
                           <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#868e96' }}>
                             {job.reels_count}개 릴스
+                          </div>
+                        )}
+                        {reelsStatus === 'failed' && (
+                          <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#dc3545' }}>
+                            릴스 수집 실패
+                          </div>
+                        )}
+                      </QueueCell>
+                      <QueueCell>
+                        {job.error_message ? (
+                          <div style={{ fontSize: '0.75rem', color: '#dc3545' }}>
+                            {job.error_message}
+                          </div>
+                        ) : (
+                          <div>
+                            {profileStatus === 'failed' && (
+                              <div style={{ fontSize: '0.75rem', color: '#dc3545', marginBottom: '0.25rem' }}>
+                                • 프로필 수집 실패
+                              </div>
+                            )}
+                            {reelsStatus === 'failed' && (
+                              <div style={{ fontSize: '0.75rem', color: '#dc3545' }}>
+                                • 릴스 수집 실패
+                              </div>
+                            )}
+                            {profileStatus !== 'failed' && reelsStatus !== 'failed' && jobStatus !== 'failed' && (
+                              <span style={{ fontSize: '0.75rem', color: '#868e96' }}>-</span>
+                            )}
                           </div>
                         )}
                       </QueueCell>
@@ -1339,7 +1570,7 @@ const IngestTab: React.FC = () => {
               required
             />
             <InfoText>
-              프로필 URL만 입력하세요 (게시물이나 릴스 URL 제외). BrightData API를 사용하여 실제 데이터를 수집합니다. 
+              프로필 URL만 입력하세요 (릴스 URL 제외). BrightData API를 사용하여 실제 데이터를 수집합니다. 
               스냅샷 생성에 5-15분 정도 소요될 수 있습니다.
             </InfoText>
           </FormGroup>

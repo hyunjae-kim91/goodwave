@@ -355,7 +355,9 @@ const InstagramReelReport: React.FC = () => {
       setError(null);
       const data = await reportsApi.getAvailableCampaigns();
       const reelCampaigns = data.filter(c => 
-        c.campaign_type === 'instagram_reel' || c.campaign_type === 'all'
+        c.campaign_type === 'instagram_reel' || 
+        c.campaign_type === 'instagram_post' ||  // 인스타그램 포스트도 포함 (릴스 포함)
+        c.campaign_type === 'all'
       );
       setCampaigns(reelCampaigns);
       

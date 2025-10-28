@@ -437,19 +437,16 @@ class CollectionJob(Base):
     url = Column(Text, nullable=False)
     username = Column(String(255))
     collect_profile = Column(Boolean, default=True)
-    collect_posts = Column(Boolean, default=True)
     collect_reels = Column(Boolean, default=True)
     status = Column(String(50), default="pending")  # pending, processing, completed, failed
     priority = Column(Integer, default=0)  # 높은 숫자가 우선순위 높음
     
     # 진행상황 추적
     profile_status = Column(String(50), default="pending")  # pending, processing, completed, failed, skipped
-    posts_status = Column(String(50), default="pending")
     reels_status = Column(String(50), default="pending")
     
     # 결과 카운트
     profile_count = Column(Integer, default=0)
-    posts_count = Column(Integer, default=0)
     reels_count = Column(Integer, default=0)
     
     # 메타데이터
@@ -468,15 +465,12 @@ class CollectionJob(Base):
             "url": self.url,
             "username": self.username,
             "collect_profile": self.collect_profile,
-            "collect_posts": self.collect_posts,
             "collect_reels": self.collect_reels,
             "status": self.status,
             "priority": self.priority,
             "profile_status": self.profile_status,
-            "posts_status": self.posts_status,
             "reels_status": self.reels_status,
             "profile_count": self.profile_count,
-            "posts_count": self.posts_count,
             "reels_count": self.reels_count,
             "error_message": self.error_message,
             "job_metadata": self.job_metadata,
@@ -510,6 +504,56 @@ class ClassificationJob(Base):
             "priority": self.priority,
             "error_message": self.error_message,
             "job_metadata": self.job_metadata,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "started_at": self.started_at.isoformat() if self.started_at else None,
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+        }
+
+class CampaignReelCollectionJob(Base):
+    __tablename__ = "campaign_reel_collection_jobs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    campaign_id = Column(Integer, ForeignKey("campaigns.id"), nullable=False)
+    reel_url = Column(Text, nullable=False)
+    status = Column(String(50), default="pending")  # pending, processing, completed, failed
+    priority = Column(Integer, default=0)
+    
+    # 수집된 데이터
+    user_posted = Column(String(255))  # 계정명
+    video_play_count = Column(Integer)  # 재생 수
+    thumbnail_url = Column(Text)  # 원본 썸네일 URL
+    s3_thumbnail_url = Column(Text)  # S3에 저장된 썸네일 URL
+    
+    # 에러 및 메타데이터
+    error_message = Column(Text)
+    job_metadata = Column(JSON)
+    brightdata_job_id = Column(String(255))  # BrightData API job ID
+    
+    # 타임스탬프
+    created_at = Column(DateTime, default=func.now())
+    started_at = Column(DateTime)
+    completed_at = Column(DateTime)
+    
+    def to_dict(self):
+        # job_metadata에서 date_posted 추출
+        date_posted = None
+        if self.job_metadata and isinstance(self.job_metadata, dict):
+            date_posted = self.job_metadata.get('date_posted')
+        
+        return {
+            "id": self.id,
+            "campaign_id": self.campaign_id,
+            "reel_url": self.reel_url,
+            "status": self.status,
+            "priority": self.priority,
+            "user_posted": self.user_posted,
+            "video_play_count": self.video_play_count,
+            "thumbnail_url": self.thumbnail_url,
+            "s3_thumbnail_url": self.s3_thumbnail_url,
+            "error_message": self.error_message,
+            "job_metadata": self.job_metadata,
+            "brightdata_job_id": self.brightdata_job_id,
+            "date_posted": date_posted,  # 게시날짜
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,

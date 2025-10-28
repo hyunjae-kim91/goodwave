@@ -12,7 +12,8 @@ import {
   Search,
   Tag,
   MessageSquare,
-  PieChart
+  PieChart,
+  Activity
 } from 'lucide-react';
 
 const NavContainer = styled.nav`
@@ -73,6 +74,10 @@ const Navigation: React.FC = () => {
         <NavItem to="/admin/campaigns" $isActive={isActive('/admin/campaigns')}>
           <Settings size={16} />
           캠페인 관리
+        </NavItem>
+        <NavItem to="/admin/campaign-collection-status" $isActive={isActive('/admin/campaign-collection-status')}>
+          <Activity size={16} />
+          캠페인 수집 조회
         </NavItem>
       </NavSection>
       

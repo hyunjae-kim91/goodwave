@@ -1,4 +1,5 @@
 import logging
+import json
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
@@ -52,7 +53,7 @@ class InfluencerService:
         return None
 
     @staticmethod
-    def _sanitize_profile_data(profile_data: Dict[str, Any]) -> Dict[str, Any]:
+    def _sanitize_profile_data(profile_data: Dict[str, Any], fallback_username: str = None) -> Dict[str, Any]:
         allowed_fields = {
             "username",
             "full_name",
@@ -71,14 +72,34 @@ class InfluencerService:
             "is_verified",
         }
 
-        username = profile_data.get("username") or profile_data.get("user_posted")
+        username = profile_data.get("username") or profile_data.get("user_posted") or fallback_username
         if not username:
             raise ValueError("프로필 데이터에 username이 없습니다")
 
+        # 매핑된 필드만 추출
         sanitized: Dict[str, Any] = {key: profile_data.get(key) for key in allowed_fields if key in profile_data}
         sanitized["username"] = username
         sanitized.setdefault("full_name", profile_data.get("profile_name") or username)
         sanitized.setdefault("profile_name", sanitized.get("full_name"))
+        
+        # BrightData API 필드명 매핑 시도
+        field_mappings = {
+            "followers": ["followers", "follower_count", "followers_count", "num_followers"],
+            "following": ["following", "following_count", "followees_count", "num_following"],
+            "posts_count": ["posts_count", "post_count", "num_posts", "media_count"],
+            "full_name": ["full_name", "name", "display_name", "real_name"],
+            "bio": ["bio", "biography", "description"],
+            "profile_pic_url": ["profile_pic_url", "profile_picture_url", "avatar_url", "picture_url"]
+        }
+        
+        # 다양한 필드명으로 매핑 시도
+        for standard_field, possible_fields in field_mappings.items():
+            if standard_field not in sanitized or sanitized[standard_field] is None:
+                for field_name in possible_fields:
+                    if field_name in profile_data and profile_data[field_name] is not None:
+                        sanitized[standard_field] = profile_data[field_name]
+                        logger.info(f"🔗 필드 매핑 성공: {field_name} -> {standard_field} = {profile_data[field_name]}")
+                        break
 
         # 숫자 필드 정규화
         for numeric_field in ("followers", "following", "posts_count"):
@@ -172,41 +193,84 @@ class InfluencerService:
 
         return sanitized
     
-    def create_or_update_profile(self, profile_data: Dict[str, Any]) -> InfluencerProfile:
-        """프로필 생성 또는 업데이트"""
-        sanitized = self._sanitize_profile_data(profile_data)
-        existing_profile = self.db.query(InfluencerProfile).filter(
-            InfluencerProfile.username == sanitized["username"]
-        ).first()
-        
-        if existing_profile:
-            for key, value in sanitized.items():
-                if hasattr(existing_profile, key):
-                    setattr(existing_profile, key, value)
-            existing_profile.updated_at = now_kst()
-            self.db.commit()
-            self.db.refresh(existing_profile)
-            return existing_profile
-        else:
-            db_profile = InfluencerProfile(**sanitized)
-            self.db.add(db_profile)
-            self.db.commit()
-            self.db.refresh(db_profile)
-            return db_profile
-    
-    def save_posts(self, profile_id: int, posts_data: List[Dict[str, Any]]) -> List[InfluencerPost]:
-        """게시물 저장"""
-        saved_posts = []
-        for post_data in posts_data:
-            existing_post = self.db.query(InfluencerPost).filter(
-                InfluencerPost.post_id == post_data["post_id"]
+    def create_or_update_profile(self, profile_data: Dict[str, Any], fallback_username: str = None) -> InfluencerProfile:
+        """프로필 생성 또는 업데이트 - 중복키 이슈 완전 방지"""
+        try:
+            # 원본 프로필 데이터 로깅
+            logger.info(f"🔍 원본 프로필 데이터: {json.dumps(profile_data, ensure_ascii=False, indent=2)}")
+            
+            sanitized = self._sanitize_profile_data(profile_data, fallback_username)
+            username = sanitized["username"]
+            
+            # 정제된 프로필 데이터 로깅
+            logger.info(f"🧹 정제된 프로필 데이터: {json.dumps(sanitized, ensure_ascii=False, indent=2)}")
+            
+            # 1. 기존 프로필 확인 (대소문자 구분 없이)
+            existing_profile = self.db.query(InfluencerProfile).filter(
+                InfluencerProfile.username.ilike(username)
             ).first()
             
-            if not existing_post:
-                post_data["profile_id"] = profile_id
-                db_post = InfluencerPost(**post_data)
-                self.db.add(db_post)
-                saved_posts.append(db_post)
+            if existing_profile:
+                # 기존 프로필 업데이트
+                logger.info(f"📝 기존 프로필 업데이트: {existing_profile.username} (ID: {existing_profile.id})")
+                for key, value in sanitized.items():
+                    if hasattr(existing_profile, key) and key != 'id':  # ID는 업데이트하지 않음
+                        setattr(existing_profile, key, value)
+                existing_profile.updated_at = now_kst()
+                self.db.commit()
+                self.db.refresh(existing_profile)
+                logger.info(f"✅ 프로필 업데이트 완료: {existing_profile.username}")
+                return existing_profile
+            else:
+                # 새 프로필 생성 (한 번 더 체크)
+                logger.info(f"➕ 새 프로필 생성 시도: {username}")
+                
+                # 생성 직전 다시 한 번 확인 (race condition 방지)
+                double_check = self.db.query(InfluencerProfile).filter(
+                    InfluencerProfile.username.ilike(username)
+                ).first()
+                
+                if double_check:
+                    logger.warning(f"⚠️ 생성 중 기존 프로필 발견: {username} - 업데이트로 전환")
+                    for key, value in sanitized.items():
+                        if hasattr(double_check, key) and key != 'id':
+                            setattr(double_check, key, value)
+                    double_check.updated_at = now_kst()
+                    self.db.commit()
+                    self.db.refresh(double_check)
+                    return double_check
+                
+                # 새 프로필 생성
+                db_profile = InfluencerProfile(**sanitized)
+                self.db.add(db_profile)
+                self.db.commit()
+                self.db.refresh(db_profile)
+                logger.info(f"✅ 새 프로필 생성 완료: {db_profile.username} (ID: {db_profile.id})")
+                return db_profile
+                
+        except Exception as e:
+            logger.error(f"❌ 프로필 생성/업데이트 실패: {username} - {str(e)}")
+            self.db.rollback()
+            
+            # 실패 시 기존 프로필이 있는지 다시 확인
+            existing = self.db.query(InfluencerProfile).filter(
+                InfluencerProfile.username.ilike(username)
+            ).first()
+            if existing:
+                logger.info(f"🔄 실패 후 기존 프로필 반환: {existing.username}")
+                return existing
+            else:
+                raise e
+    
+    def save_posts(self, profile_id: int, posts_data: List[Dict[str, Any]]) -> List[InfluencerPost]:
+        """게시물 저장 - 새로운 데이터로 완전 교체"""
+        saved_posts = []
+        for post_data in posts_data:
+            # 새 게시물 생성 (기존 데이터는 이미 삭제됨)
+            post_data["profile_id"] = profile_id
+            db_post = InfluencerPost(**post_data)
+            self.db.add(db_post)
+            saved_posts.append(db_post)
         
         if saved_posts:
             self.db.commit()
@@ -216,55 +280,45 @@ class InfluencerService:
         return saved_posts
     
     def save_reels(self, profile_id: int, reels_data: List[Dict[str, Any]]) -> List[InfluencerReel]:
-        """릴스 저장"""
-        print(f"🎬 DB Save: Starting to save {len(reels_data)} reels for profile_id={profile_id}")
+        """릴스 저장 - 새로운 데이터로 완전 교체"""
+        print(f"🎬 Save: Starting to save {len(reels_data)} reels for profile_id={profile_id}")
         saved_reels = []
         
         for idx, reel_data in enumerate(reels_data):
             reel_id = reel_data.get("reel_id")
-            print(f"🔍 DB Check: Checking if reel {reel_id} already exists")
+            print(f"🔍 Creating new reel {reel_id}")
             
-            existing_reel = self.db.query(InfluencerReel).filter(
-                InfluencerReel.reel_id == reel_id
-            ).first()
-            
-            if existing_reel:
-                print(f"⚠️ DB Skip: Reel {reel_id} already exists, skipping")
-            else:
-                print(f"➕ DB Insert: Adding new reel {reel_id}")
+            try:
                 reel_data["profile_id"] = profile_id
                 
-                # DB 필드 매핑 로깅
-                print(f"🗂️ DB Fields: {list(reel_data.keys())}")
-                print(f"📊 DB Values: reel_id={reel_data.get('reel_id')}, media_type={reel_data.get('media_type')}, views={reel_data.get('views')}")
-                
-                try:
-                    db_reel = InfluencerReel(**reel_data)
-                    self.db.add(db_reel)
-                    saved_reels.append(db_reel)
-                    print(f"✅ DB Success: Added reel {reel_id} to session")
-                except Exception as e:
-                    print(f"❌ DB Error: Failed to create InfluencerReel: {e}")
-                    print(f"💥 DB Error Data: {reel_data}")
-                    raise
-        
-        if saved_reels:
-            print(f"💾 DB Commit: Committing {len(saved_reels)} reels to database")
-            try:
-                self.db.commit()
-                print(f"✅ DB Commit Success: All reels committed")
-                
-                for idx, reel in enumerate(saved_reels):
-                    self.db.refresh(reel)
-                    print(f"🔄 DB Refresh: Refreshed reel {idx+1}, ID={reel.id}")
+                # 새 릴스 생성 (기존 데이터는 이미 삭제됨)
+                print(f"➕ Creating new reel: {reel_id}")
+                new_reel = InfluencerReel(**reel_data)
+                self.db.add(new_reel)
+                self.db.flush()  # ID 생성을 위해 flush
+                saved_reels.append(new_reel)
+                print(f"✅ Create Success: {reel_id} (ID: {new_reel.id})")
+                    
             except Exception as e:
-                print(f"❌ DB Commit Error: {e}")
-                self.db.rollback()
-                raise
-        else:
-            print(f"📝 DB Skip: No new reels to save")
+                print(f"❌ Create Error: {reel_id} - {e}")
+                # 개별 실패해도 계속 진행
+                continue
         
-        print(f"🎉 DB Complete: Successfully processed {len(reels_data)} reels, saved {len(saved_reels)} new ones")
+        # 한 번에 커밋
+        try:
+            self.db.commit()
+            print(f"✅ Commit: {len(saved_reels)} reels committed")
+            
+            # 새로고침
+            for reel in saved_reels:
+                self.db.refresh(reel)
+                
+        except Exception as commit_error:
+            print(f"❌ Commit Error: {commit_error}")
+            self.db.rollback()
+            saved_reels = []
+        
+        print(f"🎉 Complete: {len(saved_reels)} reels saved")
         return saved_reels
     
     def get_profile_by_username(self, username: str) -> Optional[InfluencerProfile]:
@@ -336,14 +390,26 @@ class InfluencerService:
             )
         ).first()
 
-    async def save_profile_data(self, profile_data: Dict[str, Any]) -> InfluencerProfile:
+    async def save_profile_data(self, profile_data: Dict[str, Any], fallback_username: str = None) -> InfluencerProfile:
         """비동기 워커 호환 프로필 저장"""
-        return self.create_or_update_profile(profile_data)
+        return self.create_or_update_profile(profile_data, fallback_username)
 
     async def save_posts_data(self, posts_data: List[Dict[str, Any]], username: str) -> List[InfluencerPost]:
         profile = self.get_profile_by_username(username)
         if not profile:
             profile = self.create_or_update_profile({"username": username})
+
+        # 기존 게시물 데이터 삭제 (새로운 수집으로 교체)
+        existing_posts = self.db.query(InfluencerPost).filter(
+            InfluencerPost.profile_id == profile.id
+        ).all()
+        
+        if existing_posts:
+            print(f"🗑️ 기존 게시물 {len(existing_posts)}개 삭제 중...")
+            for post in existing_posts:
+                self.db.delete(post)
+            self.db.commit()
+            print(f"✅ 기존 게시물 데이터 삭제 완료")
 
         sanitized_posts = []
         for post in posts_data:
@@ -361,6 +427,18 @@ class InfluencerService:
         if not profile:
             profile = self.create_or_update_profile({"username": username})
 
+        # 기존 릴스 데이터 삭제 (새로운 수집으로 교체)
+        existing_reels = self.db.query(InfluencerReel).filter(
+            InfluencerReel.profile_id == profile.id
+        ).all()
+        
+        if existing_reels:
+            print(f"🗑️ 기존 릴스 {len(existing_reels)}개 삭제 중...")
+            for reel in existing_reels:
+                self.db.delete(reel)
+            self.db.commit()
+            print(f"✅ 기존 릴스 데이터 삭제 완료")
+
         sanitized_reels = []
         for reel in reels_data:
             thumbnail_source = (
@@ -371,7 +449,12 @@ class InfluencerService:
 
             sanitized = self._sanitize_reel_data(reel)
             if sanitized:
-                if thumbnail_source and self.s3_service and self.s3_service.bucket_name not in thumbnail_source:
+                # 더미/테스트 URL 무시
+                if (thumbnail_source and 
+                    self.s3_service and 
+                    self.s3_service.bucket_name not in thumbnail_source and
+                    "placeholder" not in thumbnail_source.lower() and
+                    "via.placeholder" not in thumbnail_source.lower()):
                     try:
                         s3_url = await self.s3_service.upload_instagram_thumbnail(
                             thumbnail_source,
@@ -383,6 +466,8 @@ class InfluencerService:
                             sanitized["photos"] = [s3_url]
                     except Exception as e:
                         logger.error(f"릴스 썸네일 업로드 실패: {thumbnail_source} - {e}")
+                elif thumbnail_source and "placeholder" in thumbnail_source.lower():
+                    logger.warning(f"더미 이미지 URL 무시: {thumbnail_source}")
 
                 sanitized_reels.append(sanitized)
 
@@ -399,29 +484,43 @@ class InfluencerService:
     
     def delete_profile(self, username: str) -> bool:
         """프로필 및 관련 데이터 삭제"""
-        profile = self.get_profile_by_username(username)
-        if profile:
-            # 관련 데이터 수동 삭제 (CASCADE 설정이 안되어 있어서)
-            # 1. 분석 결과 삭제
-            self.db.query(InfluencerAnalysis).filter(
-                InfluencerAnalysis.profile_id == profile.id
-            ).delete()
-            
-            # 2. 릴스 데이터 삭제
-            self.db.query(InfluencerReel).filter(
-                InfluencerReel.profile_id == profile.id
-            ).delete()
-            
-            # 3. 게시물 데이터 삭제
-            self.db.query(InfluencerPost).filter(
-                InfluencerPost.profile_id == profile.id
-            ).delete()
-            
-            # 4. 프로필 삭제
-            self.db.delete(profile)
-            self.db.commit()
-            return True
-        return False
+        try:
+            profile = self.get_profile_by_username(username)
+            if profile:
+                profile_id = profile.id
+                logger.info(f"🗑️ 프로필 ID {profile_id}의 모든 데이터 삭제 중: {username}")
+                
+                # 관련 데이터 수동 삭제 (CASCADE 설정이 안되어 있어서)
+                # 1. 분석 결과 삭제
+                analysis_count = self.db.query(InfluencerAnalysis).filter(
+                    InfluencerAnalysis.profile_id == profile_id
+                ).delete(synchronize_session=False)
+                logger.info(f"  - 분석 결과 {analysis_count}개 삭제됨")
+                
+                # 2. 릴스 데이터 삭제  
+                reels_count = self.db.query(InfluencerReel).filter(
+                    InfluencerReel.profile_id == profile_id
+                ).delete(synchronize_session=False)
+                logger.info(f"  - 릴스 데이터 {reels_count}개 삭제됨")
+                
+                # 3. 게시물 데이터 삭제
+                posts_count = self.db.query(InfluencerPost).filter(
+                    InfluencerPost.profile_id == profile_id
+                ).delete(synchronize_session=False)
+                logger.info(f"  - 게시물 데이터 {posts_count}개 삭제됨")
+                
+                # 4. 프로필 삭제
+                self.db.delete(profile)
+                self.db.commit()
+                logger.info(f"✅ 프로필 {username} (ID: {profile_id}) 완전 삭제 완료")
+                return True
+            else:
+                logger.info(f"ℹ️ 삭제할 프로필이 없음: {username}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ 프로필 삭제 실패: {username} - {str(e)}")
+            self.db.rollback()
+            return False
     
     def create_batch_session(self, session_id: str, total_requested: int, 
                            summary: Dict[str, Any]) -> BatchIngestSession:

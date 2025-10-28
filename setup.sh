@@ -88,7 +88,8 @@ fi
 
 # 5. Python 3 설치 확인
 log_info "Python 설치 확인..."
-sudo apt-get install -y python3 python3-pip python3-venv
+sudo apt-get install -y python3 python3-pip python3-venv python3-dev libpq-dev
+pip3 install psycopg2-binary
 
 # 6. 환경 변수 파일 확인
 log_info "환경 변수 파일 확인..."
@@ -126,27 +127,44 @@ log_info "Docker 이미지 빌드 및 컨테이너 시작..."
 log_info "이 과정은 몇 분이 소요될 수 있습니다..."
 
 # 단계별로 서비스 시작
-log_info "1단계: 데이터베이스 서비스 시작..."
-docker-compose up -d postgres redis
+log_info "1단계: Redis 서비스 시작..."
+docker-compose up -d redis
 
-log_info "데이터베이스 서비스 준비 대기..."
-sleep 10
+log_info "Redis 서비스 준비 대기..."
+sleep 5
 
-# PostgreSQL 준비 상태 확인
-log_info "PostgreSQL 연결 확인..."
+# AWS RDS 연결 확인
+log_info "AWS RDS PostgreSQL 연결 확인..."
 max_attempts=30
 attempt=1
-while ! docker-compose exec -T postgres pg_isready -U postgres &> /dev/null; do
+
+# .env 파일에서 DATABASE_URL 읽기
+if [ -f ".env" ]; then
+    export $(grep -v '^#' .env | xargs)
+fi
+
+# RDS 연결 테스트 (간단한 방법으로 psql 사용)
+while ! timeout 10 python3 -c "
+import os
+import psycopg2
+try:
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    conn.close()
+    print('RDS 연결 성공')
+except Exception as e:
+    print(f'RDS 연결 실패: {e}')
+    exit(1)
+" &> /dev/null; do
     if [ $attempt -eq $max_attempts ]; then
-        log_error "PostgreSQL 연결에 실패했습니다."
-        docker-compose logs postgres
+        log_error "AWS RDS PostgreSQL 연결에 실패했습니다."
+        log_error "DATABASE_URL 환경 변수와 RDS 설정을 확인하세요."
         exit 1
     fi
-    log_info "PostgreSQL 연결 대기 중... (시도 $attempt/$max_attempts)"
-    sleep 2
+    log_info "AWS RDS 연결 대기 중... (시도 $attempt/$max_attempts)"
+    sleep 3
     attempt=$((attempt + 1))
 done
-log_success "PostgreSQL 연결 성공!"
+log_success "AWS RDS PostgreSQL 연결 성공!"
 
 log_info "2단계: 백엔드 서비스 빌드 및 시작..."
 docker-compose up -d --build backend
@@ -228,7 +246,7 @@ echo "🌐 프론트엔드:     http://localhost:3000"
 echo "🔧 관리자 페이지:   http://localhost:3000/admin"
 echo "🔌 백엔드 API:     http://localhost:8000"
 echo "📊 API 문서:       http://localhost:8000/docs"
-echo "🗄️  데이터베이스:   localhost:5432 (postgres/password)"
+echo "🗄️  데이터베이스:   AWS RDS (설정된 DATABASE_URL 사용)"
 echo ""
 echo -e "${BLUE}📖 보고서 페이지 (예시):${NC}"
 echo "📱 인스타그램 게시물: http://localhost:3000/report/instagram-post?campaign=테스트캠페인"

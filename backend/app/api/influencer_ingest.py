@@ -38,7 +38,6 @@ async def ingest_instagram_data_batch(
         # 수집 옵션 설정
         collect_options = request.options or {
             "collectProfile": True,
-            "collectPosts": True,
             "collectReels": True
         }
         
@@ -66,10 +65,11 @@ async def ingest_instagram_data_batch(
         for url in valid_urls:
             job_id = str(uuid.uuid4())
             
-            # username 추출 (간단한 방법)
-            username = url.split('/')[-1] if url.endswith('/') else url.split('/')[-1]
-            if '?' in username:
-                username = username.split('?')[0]
+            # username 추출 (URL 정리 후)
+            clean_url = url.strip().rstrip('/')  # trailing slash 제거
+            if '?' in clean_url:
+                clean_url = clean_url.split('?')[0]  # query params 제거
+            username = clean_url.split('/')[-1]  # 마지막 부분이 username
             
             # 큐에 작업 생성
             collection_job = CollectionJob(
@@ -77,12 +77,10 @@ async def ingest_instagram_data_batch(
                 url=url,
                 username=username,
                 collect_profile=collect_options.get("collectProfile", True),
-                collect_posts=collect_options.get("collectPosts", True),
                 collect_reels=collect_options.get("collectReels", True),
                 status="pending",
                 priority=0,
                 profile_status="pending" if collect_options.get("collectProfile", True) else "skipped",
-                posts_status="pending" if collect_options.get("collectPosts", True) else "skipped",
                 reels_status="pending" if collect_options.get("collectReels", True) else "skipped"
             )
             
@@ -297,6 +295,181 @@ async def stop_worker():
         return {
             "success": False,
             "message": f"워커 중지 실패: {str(e)}"
+        }
+
+@router.post("/influencer/collection-jobs/stop-processing")
+async def stop_processing_jobs(db: Session = Depends(get_db)):
+    """진행 중인 수집 작업들을 중지합니다."""
+    try:
+        # 처리 중인 작업들을 조회
+        processing_jobs = db.query(CollectionJob).filter(
+            CollectionJob.status == "processing"
+        ).all()
+        
+        stopped_count = 0
+        for job in processing_jobs:
+            job.status = "cancelled"
+            job.error_message = "사용자에 의해 중지됨"
+            job.completed_at = now_kst()
+            
+            # 개별 상태도 중지로 변경
+            if job.collect_profile and job.profile_status == "pending":
+                job.profile_status = "cancelled"
+            if job.collect_reels and job.reels_status == "pending":
+                job.reels_status = "cancelled"
+            
+            stopped_count += 1
+        
+        db.commit()
+        
+        logger.info(f"진행 중인 {stopped_count}개 작업이 중지되었습니다")
+        
+        return {
+            "success": True,
+            "message": f"{stopped_count}개의 진행 중인 작업이 중지되었습니다",
+            "stopped_count": stopped_count
+        }
+        
+    except Exception as e:
+        logger.error(f"진행 중인 작업 중지 실패: {str(e)}")
+        db.rollback()
+        return {
+            "success": False,
+            "message": f"작업 중지 실패: {str(e)}"
+        }
+
+@router.post("/influencer/collection-jobs/stop-all")
+async def stop_all_jobs(db: Session = Depends(get_db)):
+    """워커 중지 + 진행 중인 작업 모두 중지"""
+    try:
+        # 1. 워커 중지
+        stop_collection_worker()
+        
+        # 2. 처리 중인 작업들 중지
+        processing_jobs = db.query(CollectionJob).filter(
+            CollectionJob.status == "processing"
+        ).all()
+        
+        # 3. 대기 중인 작업들도 중지
+        pending_jobs = db.query(CollectionJob).filter(
+            CollectionJob.status == "pending"
+        ).all()
+        
+        stopped_count = 0
+        
+        # 처리 중인 작업들 중지
+        for job in processing_jobs:
+            job.status = "cancelled"
+            job.error_message = "사용자에 의해 중지됨"
+            job.completed_at = now_kst()
+            
+            # 개별 상태도 중지로 변경
+            if job.collect_profile and job.profile_status in ["pending", "processing"]:
+                job.profile_status = "cancelled"
+            if job.collect_reels and job.reels_status in ["pending", "processing"]:
+                job.reels_status = "cancelled"
+            
+            stopped_count += 1
+        
+        # 대기 중인 작업들 중지
+        for job in pending_jobs:
+            job.status = "cancelled"
+            job.error_message = "사용자에 의해 중지됨"
+            job.completed_at = now_kst()
+            
+            # 개별 상태도 중지로 변경
+            if job.collect_profile and job.profile_status == "pending":
+                job.profile_status = "cancelled"
+            if job.collect_reels and job.reels_status == "pending":
+                job.reels_status = "cancelled"
+            
+            stopped_count += 1
+        
+        db.commit()
+        
+        logger.info(f"워커 중지 및 {stopped_count}개 작업이 중지되었습니다")
+        
+        return {
+            "success": True,
+            "message": f"워커가 중지되고 {stopped_count}개 작업이 중지되었습니다",
+            "stopped_count": stopped_count,
+            "worker_status": get_worker_status()
+        }
+        
+    except Exception as e:
+        logger.error(f"전체 중지 실패: {str(e)}")
+        db.rollback()
+        return {
+            "success": False,
+            "message": f"전체 중지 실패: {str(e)}"
+        }
+
+@router.post("/influencer/collection-jobs/retry")
+async def retry_failed_jobs(
+    job_ids: List[str],
+    db: Session = Depends(get_db)
+):
+    """실패한 작업들을 재실행합니다."""
+    try:
+        if not job_ids:
+            return {
+                "success": False,
+                "message": "재실행할 작업 ID가 없습니다",
+                "retried_count": 0
+            }
+        
+        # 실패한 작업들을 조회
+        failed_jobs = db.query(CollectionJob).filter(
+            CollectionJob.job_id.in_(job_ids),
+            CollectionJob.status == "failed"
+        ).all()
+        
+        if not failed_jobs:
+            return {
+                "success": False,
+                "message": "재실행할 수 있는 실패한 작업이 없습니다",
+                "retried_count": 0
+            }
+        
+        # 작업들을 다시 pending 상태로 변경
+        retried_count = 0
+        for job in failed_jobs:
+            job.status = "pending"
+            job.started_at = None
+            job.completed_at = None
+            job.error_message = None
+            
+            # 개별 상태들도 재설정
+            if job.collect_profile:
+                job.profile_status = "pending"
+            if job.collect_reels:
+                job.reels_status = "pending"
+            
+            retried_count += 1
+        
+        db.commit()
+        
+        # 워커가 실행 중이 아니면 시작
+        worker_status = get_worker_status()
+        if not worker_status.get("is_running"):
+            logger.info("재실행을 위해 수집 워커를 자동으로 시작합니다")
+            await start_collection_worker()
+        
+        logger.info(f"{retried_count}개의 실패한 작업이 재실행을 위해 큐에 추가되었습니다")
+        
+        return {
+            "success": True,
+            "message": f"{retried_count}개의 작업이 재실행을 위해 큐에 추가되었습니다",
+            "retried_count": retried_count
+        }
+        
+    except Exception as e:
+        logger.error(f"작업 재실행 실패: {str(e)}")
+        db.rollback()
+        return {
+            "success": False,
+            "message": f"작업 재실행 실패: {str(e)}",
+            "retried_count": 0
         }
 
 @router.get("/influencer/worker/status")

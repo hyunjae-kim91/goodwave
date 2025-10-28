@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from app.core.config import settings
 from app.db.database import engine, SessionLocal
 from app.db import models
-from app.api import campaigns, reports, admin, influencer_ingest, influencer_files, influencer_classification, influencer_prompt, progress_stream
+from app.api import campaigns, reports, admin, influencer_ingest, influencer_files, influencer_classification, influencer_prompt, progress_stream, unified_reports
 from app.services.collection_worker import start_collection_worker, stop_collection_worker
 from app.services.classification_worker import start_classification_worker, stop_classification_worker
 from app.services.campaign_schedule_runner import start_campaign_schedule_runner, stop_campaign_schedule_runner
@@ -63,6 +63,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
 app.include_router(campaigns.router, prefix="/api/campaigns", tags=["campaigns"])
 app.include_router(reports.router, prefix="/api/reports", tags=["reports"])
+app.include_router(unified_reports.router, prefix="/api/unified-reports", tags=["unified-reports"])
 
 # Include influencer analysis routers
 app.include_router(influencer_ingest.router, prefix="/api", tags=["influencer-ingest"])

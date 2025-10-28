@@ -1,4 +1,5 @@
 import time
+import json
 import requests
 from dotenv import load_dotenv
 import os
@@ -28,15 +29,20 @@ class Instagram:
         
         # 상태 코드 확인
         if response.status_code != 200:
+            print(f"❌ BrightData API 요청 실패: HTTP {response.status_code}")
+            print(f"📄 에러 응답: {response.text}")
             raise Exception(f"BrightData API 요청 실패: HTTP {response.status_code} - {response.text}")
 
         try:
             result = response.json()
             snapshot_id = result.get("snapshot_id")
             if not snapshot_id:
+                print(f"❌ snapshot_id를 찾을 수 없음: {result}")
                 raise ValueError(f"snapshot_id not found in response: {result}")
+            print(f"✅ 스냅샷 ID 수신: {snapshot_id}")
             return snapshot_id
         except requests.exceptions.JSONDecodeError as e:
+            print(f"❌ JSON 파싱 실패: {response.text[:200]}...")
             raise Exception(f"Failed to parse trigger response as JSON. Response: {response.text[:200]}... Error: {str(e)}")
 
     def wait_for_snapshot(self, snapshot_id, data_type="profile", session_id=None):
@@ -47,28 +53,34 @@ class Instagram:
 
         # 데이터 타입별 최소 대기 시간 설정
         if data_type in ["posts", "reels"]:
-            min_wait_time = 120  # 게시물/릴스는 최소 2분
-            max_wait_time = 1800 # 최대 30분 (무제한에 가깝게)
-            check_interval = 30   # 30초 간격
+            min_wait_time = 5    # 게시물/릴스는 5초 대기
+            max_wait_time = 600  # 릴스는 최대 10분 (600초)
+            check_interval = 5   # 5초 간격
         else:
-            min_wait_time = 30   # 프로필은 최소 30초
-            max_wait_time = 600  # 최대 10분
-            check_interval = 15  # 15초 간격
+            min_wait_time = 0    # 프로필은 즉시 확인 시작
+            max_wait_time = 60   # 프로필은 최대 1분
+            check_interval = 5   # 5초 간격
         
         wait_count = 0
         
         # 최소 대기 시간 확보
-        print(f"📊 {data_type.upper()} 데이터 수집 중... 최소 {min_wait_time}초 대기")
-        if session_id:
-            from app.services.progress_service import progress_service
-            progress_service.update_progress(session_id, f"{data_type}_collection", 10, f"{data_type.title()} 데이터 처리 시작")
-        
-        time.sleep(min_wait_time)
-        wait_count += min_wait_time
-        
-        if session_id:
-            from app.services.progress_service import progress_service
-            progress_service.update_progress(session_id, f"{data_type}_collection", 30, f"{data_type.title()} 데이터 처리 중... ({wait_count}초 경과)")
+        if min_wait_time > 0:
+            print(f"📊 {data_type.upper()} 데이터 수집 중... 최소 {min_wait_time}초 대기")
+            if session_id:
+                from app.services.progress_service import progress_service
+                progress_service.update_progress(session_id, f"{data_type}_collection", 10, f"{data_type.title()} 데이터 처리 시작")
+            
+            time.sleep(min_wait_time)
+            wait_count += min_wait_time
+            
+            if session_id:
+                from app.services.progress_service import progress_service
+                progress_service.update_progress(session_id, f"{data_type}_collection", 30, f"{data_type.title()} 데이터 처리 중... ({wait_count}초 경과)")
+        else:
+            print(f"📊 {data_type.upper()} 데이터 수집 중... 즉시 상태 확인 시작")
+            if session_id:
+                from app.services.progress_service import progress_service
+                progress_service.update_progress(session_id, f"{data_type}_collection", 20, f"{data_type.title()} 상태 확인 시작")
         
         while wait_count < max_wait_time:
             try:
@@ -87,36 +99,70 @@ class Instagram:
                     wait_count += check_interval
                     continue
 
-                if response.status_code != 200:
-                    print(f"⚠️ {data_type.title()} 예상치 못한 상태 코드: {response.status_code}")
-                    time.sleep(check_interval)
-                    wait_count += check_interval
-                    continue
+                if response.status_code == 200:
+                    # 200 응답일 때는 완료된 데이터가 직접 반환됨
+                    try:
+                        result = response.json()
+                        print(f"🔍 {data_type.upper()} 응답 구조: {type(result)}")
+                        
+                        if isinstance(result, list):
+                            print(f"✅ {data_type.title()} 데이터 직접 반환 완료: {len(result)}개 항목")
+                            if session_id:
+                                from app.services.progress_service import progress_service
+                                progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
+                            return {"type": "direct_data", "data": result}
+                        
+                        elif isinstance(result, dict):
+                            print(f"🔍 {data_type.upper()} 응답 키: {list(result.keys())}")
+                            if "file_urls" in result:
+                                print(f"🔍 file_urls 타입: {type(result['file_urls'])}, 내용: {result['file_urls']}")
+                            
+                            # status 확인
+                            status = result.get("status")
+                            if status in ["done", "ready"]:
+                                file_urls = result.get("file_urls", [])
+                                if file_urls:
+                                    print(f"✅ {data_type.title()} 파일 URL로 완료: {len(file_urls)}개 파일")
+                                    if session_id:
+                                        from app.services.progress_service import progress_service
+                                        progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
+                                    return {"type": "file_urls", "urls": file_urls}
+                                else:
+                                    # 데이터가 result에 직접 있을 수 있음
+                                    if "data" in result or "snapshot" in result:
+                                        data_field = result.get("data") or result.get("snapshot")
+                                        if data_field:
+                                            print(f"✅ {data_type.title()} 응답에서 직접 데이터 추출")
+                                            if session_id:
+                                                from app.services.progress_service import progress_service
+                                                progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
+                                            return {"type": "direct_data", "data": data_field}
+                                    
+                                    # 기본 다운로드 URL 시도
+                                    download_url = f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}?format=json"
+                                    print(f"🔗 {data_type.title()} 기본 다운로드 URL 사용: {download_url}")
+                                    if session_id:
+                                        from app.services.progress_service import progress_service
+                                        progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
+                                    return {"type": "file_urls", "urls": [download_url]}
+                    except Exception as e:
+                        print(f"❌ {data_type.title()} JSON 파싱 오류: {str(e)}")
+                        # raw 텍스트로 처리 시도
+                        text_data = response.text.strip()
+                        if text_data:
+                            print(f"🔄 {data_type.title()} 텍스트 데이터로 처리 시도")
+                            download_url = f"https://api.brightdata.com/datasets/v3/snapshot/{snapshot_id}?format=json"
+                            if session_id:
+                                from app.services.progress_service import progress_service
+                                progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
+                            return {"type": "file_urls", "urls": [download_url]}
 
-                result = response.json()
-                print(f"🔍 {data_type.upper()} 응답 구조: {type(result)}")
-                if isinstance(result, dict):
-                    print(f"🔍 {data_type.upper()} 응답 키: {list(result.keys())}")
-                    if "file_urls" in result:
-                        print(f"🔍 file_urls 타입: {type(result['file_urls'])}, 내용: {result['file_urls']}")
+                print(f"⚠️ {data_type.title()} 예상치 못한 상태 코드: {response.status_code}")
+                time.sleep(check_interval)
+                wait_count += check_interval
+                continue
 
-                if isinstance(result, list):
-                    print(f"✅ {data_type.title()} 데이터 직접 반환 완료")
-                    if session_id:
-                        from app.services.progress_service import progress_service
-                        progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
-                    return {"type": "direct_data", "data": result}
-
-                if result.get("status") == "done":
-                    file_urls = result.get("file_urls", [])
-                    if not file_urls:
-                        raise Exception(f"{data_type.title()} 스냅샷 완료되었지만 파일 URL이 없음")
-                    print(f"✅ {data_type.title()} 스냅샷 완료. {len(file_urls)}개 파일 사용 가능")
-                    if session_id:
-                        from app.services.progress_service import progress_service
-                        progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
-                    return {"type": "file_urls", "urls": file_urls}
-
+                # 기타 상태 코드는 계속 대기
                 remaining_time = max_wait_time - wait_count
                 progress_percent = min(90, 30 + (wait_count - min_wait_time) * 60 / (max_wait_time - min_wait_time))
                 print(f"⏳ {data_type.title()} 처리 중... {check_interval}초 후 재확인 (남은 시간: {remaining_time}초)")
@@ -152,17 +198,41 @@ class Instagram:
         
         print(f"📥 {len(valid_urls)}개의 유효한 URL에서 데이터 다운로드 시작")
         
+        # 인증 헤더 설정
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        
         for file_url in valid_urls:
             try:
                 print(f"⬇️ Downloading from: {file_url}")
-                res = requests.get(file_url)
+                res = requests.get(file_url, headers=headers, timeout=30)
                 res.raise_for_status()  # HTTP 오류 체크
                 
-                data = res.json()
-                if isinstance(data, list):
-                    all_data.extend(data)
+                # Content-Type 확인
+                content_type = res.headers.get('Content-Type', '')
+                print(f"📋 Content-Type: {content_type}")
+                
+                if 'application/json' in content_type:
+                    data = res.json()
+                    if isinstance(data, list):
+                        all_data.extend(data)
+                        print(f"✅ JSON 리스트 데이터 추가: {len(data)}개 항목")
+                    else:
+                        all_data.append(data)
+                        print(f"✅ JSON 객체 데이터 추가: 1개 항목")
                 else:
-                    all_data.append(data)
+                    # JSON이 아닌 경우 텍스트로 읽어 JSON Lines 파싱 시도
+                    text_data = res.text.strip()
+                    if text_data:
+                        # JSON Lines 형식일 수 있음 (한 줄에 하나씩 JSON)
+                        for line in text_data.split('\n'):
+                            line = line.strip()
+                            if line:
+                                try:
+                                    item = json.loads(line)
+                                    all_data.append(item)
+                                except json.JSONDecodeError:
+                                    continue
+                        print(f"✅ JSON Lines 데이터 파싱 완료: {len(text_data.split())}줄")
                     
             except requests.exceptions.RequestException as e:
                 print(f"❌ HTTP 요청 실패 {file_url}: {e}")

@@ -108,8 +108,8 @@ class CollectionWorker:
                 job.status = "pending"
                 if job.collect_profile:
                     job.profile_status = "pending"
-                if job.collect_posts:
-                    job.posts_status = "pending"
+                # collect_posts 필드 제거됨
+                    # posts_status 필드 제거됨
                 if job.collect_reels:
                     job.reels_status = "pending"
                 job.started_at = None
@@ -122,25 +122,33 @@ class CollectionWorker:
             session.close()
     
     async def process_pending_jobs(self):
-        """대기 중인 작업들을 처리"""
+        """대기 중인 작업들을 순차 처리 (계정별 동시 작업 방지)"""
         db = self.Session()
         try:
-            # 우선순위 순으로 대기 중인 작업 조회 (최대 3개까지 동시 처리)
-            pending_jobs = db.query(CollectionJob).filter(
+            # 현재 처리 중인 작업이 있는지 확인
+            processing_jobs = db.query(CollectionJob).filter(
+                CollectionJob.status == "processing"
+            ).count()
+            
+            if processing_jobs > 0:
+                logger.info(f"⏳ 처리 중인 작업 {processing_jobs}개가 있어서 대기 중...")
+                return
+            
+            # 우선순위 순으로 대기 중인 작업 조회 (처리 중인 작업이 없을 때만)
+            pending_job = db.query(CollectionJob).filter(
                 CollectionJob.status == "pending"
             ).order_by(
                 CollectionJob.priority.desc(),
                 CollectionJob.created_at.asc()
-            ).limit(3).all()
+            ).first()
             
-            if not pending_jobs:
+            if not pending_job:
                 return
             
-            logger.info(f"📋 처리할 작업 {len(pending_jobs)}개 발견")
+            logger.info(f"📋 처리할 작업 발견: {pending_job.username}")
             
-            # 각 작업을 동시에 처리
-            tasks = [self.process_single_job(job.job_id) for job in pending_jobs]
-            await asyncio.gather(*tasks, return_exceptions=True)
+            # 단일 작업 순차 처리
+            await self.process_single_job(pending_job.job_id)
             
         finally:
             db.close()
@@ -164,41 +172,131 @@ class CollectionWorker:
             # 인플루언서 서비스 초기화
             influencer_service = InfluencerService(db, self.s3_service)
             
-            # 수집 옵션 설정
+            # URL에서 username 추출
+            url_username = self.brightdata_service._extract_username_from_url(job.url)
+            
+            # 기존 인플루언서 계정 삭제 (수집 전 필수) - 중복키 이슈 완전 방지
+            logger.info(f"🗑️ 기존 인플루언서 계정 삭제 시작: {url_username}")
+            try:
+                # 여러 변형으로 기존 계정 확인 및 삭제
+                deleted_count = 0
+                
+                # 1. 정확한 사용자명으로 삭제
+                if influencer_service.delete_profile(url_username):
+                    deleted_count += 1
+                    
+                # 2. 대소문자 변형도 확인
+                variations = [url_username.lower(), url_username.upper(), url_username.title()]
+                for variation in variations:
+                    if variation != url_username and influencer_service.delete_profile(variation):
+                        deleted_count += 1
+                
+                if deleted_count > 0:
+                    logger.info(f"✅ 기존 인플루언서 계정 {deleted_count}개 삭제 완료: {url_username}")
+                else:
+                    logger.info(f"ℹ️ 삭제할 기존 계정이 없음: {url_username}")
+                    
+                # 3. 최종 확인 - DB에서 완전히 제거되었는지 검증
+                remaining = influencer_service.get_profile_by_username(url_username)
+                if remaining:
+                    logger.warning(f"⚠️ 계정이 아직 남아있음 - 강제 삭제: {url_username}")
+                    influencer_service.delete_profile(url_username)
+                    
+            except Exception as e:
+                logger.error(f"❌ 기존 계정 삭제 실패: {url_username} - {str(e)}")
+                # 삭제 실패해도 계속 진행 (업데이트 모드로 처리)
+            
+            # 수집 옵션 설정 - 게시물 수집은 항상 비활성화
             collect_options = {
                 "collectProfile": job.collect_profile,
-                "collectPosts": job.collect_posts,
+                # collectPosts 필드 제거됨
                 "collectReels": job.collect_reels
             }
             
-            # BrightData를 통한 데이터 수집
-            result = await self.brightdata_service._collect_profile_with_brightdata(
-                job.url, job.username, collect_options
-            )
-            
-            if not result or result.get("status") == "error":
-                # 수집 실패
-                job.status = "failed"
-                job.error_message = result.get("error", "알 수 없는 오류") if result else "데이터 수집 실패"
+            # 개별 데이터 수집 및 즉시 상태 업데이트
+            try:
+                # 프로필 수집
+                if job.collect_profile:
+                    logger.info(f"🔄 프로필 수집 시작: {job.username}")
+                    try:
+                        profile_result = await asyncio.wait_for(
+                            self.brightdata_service._collect_single_data_type(
+                                job.url, url_username, "profile"
+                            ),
+                            timeout=60  # 프로필 최대 1분
+                        )
+                        
+                        if profile_result and profile_result.get("profile"):
+                            await influencer_service.save_profile_data(profile_result["profile"], url_username)
+                            job.profile_status = "completed"
+                            job.profile_count = 1
+                            logger.info(f"✅ 프로필 수집 완료: {job.username}")
+                        else:
+                            job.profile_status = "failed"
+                            logger.error(f"❌ 프로필 수집 실패: {job.username}")
+                    except asyncio.TimeoutError:
+                        job.profile_status = "failed"
+                        logger.error(f"⏰ 프로필 수집 타임아웃 (1분 초과): {job.username}")
+                    except Exception as e:
+                        job.profile_status = "failed"
+                        logger.error(f"❌ 프로필 수집 오류: {job.username} - {str(e)}")
+                    
+                    # 프로필 상태만 먼저 커밋
+                    db.commit()
+                
+                # 릴스 수집
+                if job.collect_reels:
+                    logger.info(f"🔄 릴스 수집 시작: {job.username}")
+                    try:
+                        reels_result = await asyncio.wait_for(
+                            self.brightdata_service._collect_single_data_type(
+                                job.url, url_username, "reels"
+                            ),
+                            timeout=600  # 릴스 최대 10분
+                        )
+                        
+                        if reels_result and reels_result.get("reels"):
+                            saved_reels = await influencer_service.save_reels_data(reels_result["reels"], url_username)
+                            job.reels_status = "completed"
+                            job.reels_count = len(saved_reels)
+                            logger.info(f"✅ 릴스 수집 완료: {job.username} - {len(saved_reels)}개")
+                        else:
+                            job.reels_status = "failed"
+                            logger.error(f"❌ 릴스 수집 실패: {job.username}")
+                    except asyncio.TimeoutError:
+                        job.reels_status = "failed"
+                        logger.error(f"⏰ 릴스 수집 타임아웃 (10분 초과): {job.username}")
+                    except Exception as e:
+                        job.reels_status = "failed"
+                        logger.error(f"❌ 릴스 수집 오류: {job.username} - {str(e)}")
+                        # 세션 롤백하여 정리
+                        try:
+                            db.rollback()
+                            logger.info(f"🔄 세션 롤백 완료: {job.username}")
+                        except Exception as rollback_error:
+                            logger.error(f"🔥 롤백 실패: {rollback_error}")
+                
+                # 전체 작업 완료 처리
+                if (not job.collect_profile or job.profile_status == "completed") and \
+                   (not job.collect_reels or job.reels_status == "completed"):
+                    job.status = "completed"
+                    logger.info(f"✅ 전체 작업 완료: {job.username}")
+                else:
+                    job.status = "failed"
+                    logger.error(f"❌ 일부 작업 실패: {job.username}")
+                
                 job.completed_at = now_kst()
                 
-                # 각 타입별 상태 업데이트
+            except Exception as e:
+                logger.error(f"🔥 전체 수집 오류: {job.username} - {str(e)}")
+                job.status = "failed"
+                job.error_message = str(e)
+                job.completed_at = now_kst()
+                
                 if job.collect_profile:
                     job.profile_status = "failed"
-                if job.collect_posts:
-                    job.posts_status = "failed"
                 if job.collect_reels:
                     job.reels_status = "failed"
-                    
-                logger.error(f"❌ 작업 실패: {job.username} - {job.error_message}")
-            else:
-                # 수집 성공 - 데이터 저장
-                await self.save_collected_data(job, result, influencer_service)
-                
-                job.status = "completed"
-                job.completed_at = now_kst()
-                
-                logger.info(f"✅ 작업 완료: {job.username}")
             
             db.commit()
             
@@ -215,8 +313,8 @@ class CollectionWorker:
                     # 각 타입별 상태 업데이트
                     if job.collect_profile:
                         job.profile_status = "failed"
-                    if job.collect_posts:
-                        job.posts_status = "failed"
+                    # 게시물 수집은 항상 건너뛰기
+                    # posts_status 필드 제거됨
                     if job.collect_reels:
                         job.reels_status = "failed"
                     
@@ -227,36 +325,29 @@ class CollectionWorker:
         finally:
             db.close()
     
-    async def save_collected_data(self, job: CollectionJob, result: dict, influencer_service: InfluencerService):
+    async def save_collected_data(self, job: CollectionJob, result: dict, influencer_service: InfluencerService, username: str):
         """수집된 데이터를 데이터베이스에 저장"""
         try:
             # 프로필 데이터 저장
             if job.collect_profile and result.get("profile"):
                 profile_data = result["profile"]
-                await influencer_service.save_profile_data(profile_data)
+                await influencer_service.save_profile_data(profile_data, username)
                 job.profile_status = "completed"
                 job.profile_count = 1
-                logger.info(f"💾 프로필 데이터 저장: {job.username}")
+                logger.info(f"💾 프로필 데이터 저장: {username}")
             elif job.collect_profile:
                 job.profile_status = "failed"
                 
-            # 게시물 데이터 저장
-            if job.collect_posts and result.get("posts"):
-                posts_data = result["posts"]
-                saved_posts = await influencer_service.save_posts_data(posts_data, job.username)
-                job.posts_status = "completed"
-                job.posts_count = len(saved_posts)
-                logger.info(f"💾 게시물 데이터 저장: {job.username} - {len(saved_posts)}개")
-            elif job.collect_posts:
-                job.posts_status = "failed"
+            # 게시물 데이터 저장 - 항상 건너뛰기
+            # posts_status, posts_count 필드 제거됨
                 
             # 릴스 데이터 저장
             if job.collect_reels and result.get("reels"):
                 reels_data = result["reels"]
-                saved_reels = await influencer_service.save_reels_data(reels_data, job.username)
+                saved_reels = await influencer_service.save_reels_data(reels_data, username)
                 job.reels_status = "completed"
                 job.reels_count = len(saved_reels)
-                logger.info(f"💾 릴스 데이터 저장: {job.username} - {len(saved_reels)}개")
+                logger.info(f"💾 릴스 데이터 저장: {username} - {len(saved_reels)}개")
             elif job.collect_reels:
                 job.reels_status = "failed"
                 
@@ -265,8 +356,7 @@ class CollectionWorker:
             # 저장 실패 시 상태 업데이트
             if job.collect_profile:
                 job.profile_status = "failed"
-            if job.collect_posts:
-                job.posts_status = "failed"
+            # collect_posts 필드 제거됨
             if job.collect_reels:
                 job.reels_status = "failed"
             raise e

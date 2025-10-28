@@ -77,12 +77,14 @@ class BlogService:
 
     async def _get_naver_blog_with_playwright(self, url: str) -> Dict[str, Any]:
         """네이버 블로그는 playwright 스크립트를 사용해 실제 수치를 수집"""
-        loop = asyncio.get_running_loop()
-        try:
-            raw_info = await loop.run_in_executor(None, get_blog_info, url)
-        except Exception as e:
-            print(f"Error fetching Naver blog via Playwright: {str(e)}")
-            return {}
+        # 임시로 주석처리 - RDS 마이그레이션 후 복구 필요
+        return {"title": "임시 데이터", "followers": 0, "posts": 0}
+        # loop = asyncio.get_running_loop()
+        # try:
+        #     raw_info = await loop.run_in_executor(None, get_blog_info, url)
+        # except Exception as e:
+        #     print(f"Error fetching Naver blog via Playwright: {str(e)}")
+        #     return {}
 
         if not raw_info:
             return {}
@@ -172,12 +174,12 @@ class BlogService:
                 return 0
 
             data = json.loads(raw_json)
-            if not isinstance(data, dict) or not data:
-                return 0
+            # if not isinstance(data, dict) or not data:
+            #     return 0
 
-            latest_date = max(data.keys())
-            latest_value = data.get(latest_date, 0)
-            return int(latest_value)
+            # latest_date = max(data.keys())
+            # latest_value = data.get(latest_date, 0)
+            # return int(latest_value)
 
         except Exception as e:
             print(f"Error getting daily visitors: {str(e)}")

@@ -57,6 +57,7 @@ class CampaignURLUpdate(BaseModel):
 
 
 class CampaignUpdate(BaseModel):
+    campaign_type: Optional[str] = None
     budget: Optional[float] = None
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
@@ -69,6 +70,7 @@ class CampaignUpdate(BaseModel):
         if not any(
             value is not None
             for value in (
+                self.campaign_type,
                 self.budget,
                 self.start_date,
                 self.end_date,

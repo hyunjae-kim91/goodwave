@@ -5,8 +5,8 @@ import styled from 'styled-components';
 // Pages
 import AdminDashboard from './pages/AdminDashboard';
 import CampaignManagement from './pages/CampaignManagement';
+import CampaignCollectionStatus from './pages/CampaignCollectionStatus';
 import InfluencerAnalysis from './pages/InfluencerAnalysis';
-import InstagramPostReport from './pages/reports/InstagramPostReport';
 import InstagramReelReport from './pages/reports/InstagramReelReport';
 import BlogReport from './pages/reports/BlogReport';
 
@@ -29,7 +29,7 @@ const ContentArea = styled.div`
 `;
 
 function App() {
-  const isAdminRoute = window.location.pathname.startsWith('/admin');
+  const isAdminRoute = window.location.hash.startsWith('#/admin') || window.location.pathname.startsWith('/admin');
 
   return (
     <AppContainer>
@@ -43,6 +43,7 @@ function App() {
               <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
               <Route path="/admin/dashboard" element={<AdminDashboard />} />
               <Route path="/admin/campaigns" element={<CampaignManagement />} />
+              <Route path="/admin/campaign-collection-status" element={<CampaignCollectionStatus />} />
               <Route path="/admin/influencer/ingest" element={<InfluencerAnalysis activeTab="ingest" />} />
               <Route path="/admin/influencer/explore" element={<InfluencerAnalysis activeTab="explore" />} />
               <Route path="/admin/influencer/classification" element={<InfluencerAnalysis activeTab="combined-classification" />} />
@@ -50,12 +51,10 @@ function App() {
               <Route path="/admin/influencer/analysis" element={<InfluencerAnalysis activeTab="overall-analysis" />} />
               
               {/* Public Report Routes */}
-              <Route path="/report/instagram-post" element={<InstagramPostReport />} />
               <Route path="/report/instagram-reel" element={<InstagramReelReport />} />
               <Route path="/report/blog" element={<BlogReport />} />
               
               {/* Shared Report Routes with Campaign Parameter */}
-              <Route path="/reports/instagram/posts/:campaignName" element={<InstagramPostReport />} />
               <Route path="/reports/instagram/reels/:campaignName" element={<InstagramReelReport />} />
               <Route path="/reports/blogs/:campaignName" element={<BlogReport />} />
               
