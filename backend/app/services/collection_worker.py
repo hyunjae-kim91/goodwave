@@ -26,7 +26,8 @@ class CollectionWorker:
     
     def __init__(self):
         self.is_running = False
-        self.brightdata_service = BrightDataService()
+        # BrightDataService는 나중에 세션과 함께 초기화
+        self.brightdata_service = None  
         self.s3_service = S3Service()
         # 독립적인 DB 세션 팩토리 생성
         self.Session = sessionmaker(bind=engine)
@@ -172,8 +173,11 @@ class CollectionWorker:
             # 인플루언서 서비스 초기화
             influencer_service = InfluencerService(db, self.s3_service)
             
+            # BrightDataService 초기화 (DB 세션과 함께)
+            brightdata_service = BrightDataService(db)
+            
             # URL에서 username 추출
-            url_username = self.brightdata_service._extract_username_from_url(job.url)
+            url_username = brightdata_service._extract_username_from_url(job.url)
             
             # 기존 인플루언서 계정 삭제 (수집 전 필수) - 중복키 이슈 완전 방지
             logger.info(f"🗑️ 기존 인플루언서 계정 삭제 시작: {url_username}")
@@ -220,7 +224,7 @@ class CollectionWorker:
                     logger.info(f"🔄 프로필 수집 시작: {job.username}")
                     try:
                         profile_result = await asyncio.wait_for(
-                            self.brightdata_service._collect_single_data_type(
+                            brightdata_service._collect_single_data_type(
                                 job.url, url_username, "profile"
                             ),
                             timeout=60  # 프로필 최대 1분
@@ -249,7 +253,7 @@ class CollectionWorker:
                     logger.info(f"🔄 릴스 수집 시작: {job.username}")
                     try:
                         reels_result = await asyncio.wait_for(
-                            self.brightdata_service._collect_single_data_type(
+                            brightdata_service._collect_single_data_type(
                                 job.url, url_username, "reels"
                             ),
                             timeout=600  # 릴스 최대 10분

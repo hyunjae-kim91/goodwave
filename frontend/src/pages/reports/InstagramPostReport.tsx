@@ -32,6 +32,8 @@ const ANALYSIS_PLACEHOLDER = '인플루언서 분석 수집 필요';
 
 const getAnalysisValue = (value?: string | null): string => {
   const normalized = (value ?? '').trim();
+  // 빈 값이나 null인 경우에만 "수집 필요" 표시
+  // "미분류"나 다른 분류 결과는 모두 유효한 분석 결과로 인정
   return normalized ? normalized : ANALYSIS_PLACEHOLDER;
 };
 

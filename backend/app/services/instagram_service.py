@@ -128,7 +128,9 @@ class InstagramService:
             
             # BrightData 서비스를 사용하여 프로필 데이터 수집
             from .brightdata_service import BrightDataService
-            brightdata_service = BrightDataService()
+            from ..db.database import get_db
+            db_session = next(get_db())
+            brightdata_service = BrightDataService(db_session)
             
             # 프로필 + 릴스 수집 옵션
             options = {

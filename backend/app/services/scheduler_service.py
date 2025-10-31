@@ -216,8 +216,40 @@ class SchedulerService:
                             # 릴스 ID 생성 (URL에서 추출)
                             reel_id = job.reel_url.split('/')[-2] if job.reel_url.split('/')[-2] else f"reel_{job.id}"
                             
-                            # 등급 계산
-                            grade = self._determine_influencer_grade(job.user_posted) or "등급 없음"
+                            # 실제 프로필 데이터에서 팔로워 수와 분류 결과 가져오기
+                            profile = self.db.query(models.InfluencerProfile).filter(
+                                models.InfluencerProfile.username == job.user_posted
+                            ).first()
+                            
+                            follower_count = 0
+                            grade = "등급 없음"
+                            
+                            if profile:
+                                follower_count = profile.followers or 0
+                                # 1순위: 계정 내 전체 릴스 평균 조회수 기반 등급
+                                grade = self._determine_influencer_grade(job.user_posted)
+                                if grade:
+                                    print(f"  ✅ {job.user_posted}: 평균 조회수 기반 등급 = {grade}")
+                                else:
+                                    # 2순위: 팔로워 수 기반 등급 (단일 릴스 조회수는 사용하지 않음)
+                                    grade = self._get_grade_from_followers(follower_count)
+                                    print(f"  📊 {job.user_posted}: 팔로워 수 기반 등급 = {grade}")
+                            else:
+                                # 프로필이 없으면 수집 필요
+                                grade = "수집 필요"
+                                print(f"  ⚠️ {job.user_posted}: 프로필 없음 → {grade}")
+                            
+                            # 해당 릴스의 분류 결과 가져오기 (influencer_reels 테이블에서)
+                            influencer_reel = self.db.query(models.InfluencerReel).filter(
+                                models.InfluencerReel.reel_id == reel_id,
+                                models.InfluencerReel.profile_id == profile.id if profile else None
+                            ).first()
+                            
+                            subscription_motivation = "미분류"
+                            category = "미분류"
+                            if influencer_reel:
+                                subscription_motivation = influencer_reel.subscription_motivation or "미분류"
+                                category = influencer_reel.category or "미분류"
                             
                             db_campaign_reel = models.CampaignInstagramReel(
                                 campaign_id=campaign.id,
@@ -225,12 +257,12 @@ class SchedulerService:
                                 reel_id=reel_id,
                                 username=job.user_posted,
                                 display_name=job.user_posted,
-                                follower_count=0,
+                                follower_count=follower_count,
                                 thumbnail_url=job.thumbnail_url,
                                 s3_thumbnail_url=job.s3_thumbnail_url,
                                 video_view_count=job.video_play_count or 0,
-                                subscription_motivation="수집된 데이터 기반",
-                                category="수집된 데이터 기반",
+                                subscription_motivation=subscription_motivation,
+                                category=category,
                                 grade=grade,
                                 product=campaign.product,
                                 posted_at=posted_at,
@@ -426,6 +458,37 @@ class SchedulerService:
         if average_views is None:
             return None
         return instagram_grade_service.get_grade_for_average(self.db, average_views)
+    
+    def _get_grade_from_followers(self, follower_count: int) -> str:
+        """팔로워 수에 따른 기본 등급 분류"""
+        if follower_count >= 100000:
+            return "A"
+        elif follower_count >= 10000:
+            return "B"
+        elif follower_count > 0:
+            return "C"
+        else:
+            return "등급 없음"
+    
+    def _get_grade_from_views(self, view_count: int) -> str:
+        """조회수에 따른 등급 분류 (instagram_grade_thresholds 테이블 기반)"""
+        try:
+            # 데이터베이스에서 등급 임계값 조회
+            thresholds = self.db.query(models.InstagramGradeThreshold).order_by(
+                models.InstagramGradeThreshold.min_view_count.desc()
+            ).all()
+            
+            for threshold in thresholds:
+                if view_count >= threshold.min_view_count:
+                    if threshold.max_view_count is None or view_count <= threshold.max_view_count:
+                        return threshold.grade_name
+            
+            # 어떤 임계값도 맞지 않으면 기본값
+            return "등급 없음"
+            
+        except Exception as e:
+            print(f"등급 계산 오류: {e}")
+            return "등급 없음"
 
     async def _generate_campaign_keywords(self, campaign_id: int, new_title: Optional[str]) -> List[str]:
         """캠페인 전체 제목을 기반으로 GPT를 활용해 핵심 키워드를 도출합니다."""

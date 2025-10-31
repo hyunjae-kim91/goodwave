@@ -4,10 +4,13 @@ import aiohttp
 import asyncio
 import logging
 import sys
+import csv
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from .progress_service import progress_service
+from .influencer_service import InfluencerService
+from ..db.database import get_db
 
 # instagram_api.py 임포트 (백엔드 루트 디렉토리에 복사됨)
 backend_root = str(Path(__file__).parent.parent.parent)
@@ -24,7 +27,7 @@ def now_kst() -> datetime:
     return datetime.utcnow() + KST_OFFSET
 
 class BrightDataService:
-    def __init__(self):
+    def __init__(self, db_session=None):
         self.api_key = os.getenv("BRIGHTDATA_API_KEY")
         if not self.api_key:
             raise Exception("BRIGHTDATA_API_KEY가 환경 변수에 설정되지 않았습니다")
@@ -32,7 +35,15 @@ class BrightDataService:
         # 실제 Instagram API 클래스 사용
         self.instagram_api = Instagram()
         
+        # 데이터베이스 세션 및 InfluencerService 초기화
+        self.db_session = db_session or next(get_db())
+        self.influencer_service = InfluencerService(self.db_session)
+        
         logger.info("BrightData Service initialized with real Instagram API")
+        
+        # 데이터 스냅샷 저장 디렉토리 설정
+        self.snapshot_dir = Path(__file__).parent.parent.parent / "data_snapshots"
+        self.snapshot_dir.mkdir(exist_ok=True)
         
     async def collect_instagram_data_batch(self, urls: List[str], options: Dict[str, bool] = None, session_id: str = None) -> List[Dict[str, Any]]:
         """배치로 인스타그램 데이터를 수집합니다."""
@@ -155,7 +166,9 @@ class BrightDataService:
                 
                 if data_type == "profile":
                     config = instagram_config.get("profile", {})
-                    input_data = [{"url": url}]
+                    input_data = [{
+                        "user_name": username
+                    }]
                 elif data_type == "reels":
                     config = instagram_config.get("reel", {})
                     input_data = [{
@@ -243,14 +256,26 @@ class BrightDataService:
                 
                 # 데이터 파싱
                 if data_type == "profile":
+                    logger.info(f"프로필 파싱 시작: {username}, {len(raw_data) if hasattr(raw_data, '__len__') else 'N/A'}개 항목")
+                    
+                    # 원본 데이터 저장 (파싱 전)
+                    try:
+                        json_path, csv_path = self._save_snapshot_data(raw_data, username, f"{data_type}_single")
+                        logger.info(f"📁 원본 single {data_type} 데이터 저장: JSON={json_path}, CSV={csv_path}")
+                    except Exception as save_error:
+                        logger.error(f"❌ 원본 데이터 저장 실패: {str(save_error)}")
+                    
                     profile_data = None
-                    for item in raw_data:
+                    for i, item in enumerate(raw_data):
+                        logger.debug(f"프로필 아이템 [{i}] 타입: {type(item)}")
+                        
                         # 타입 검증 추가
                         if not isinstance(item, dict):
                             logger.warning(f"⚠️ 프로필 데이터 타입 스킵: {type(item)} - {str(item)[:100]}")
                             continue
                         profile_data = self._extract_profile_from_item(item, username)
                         if profile_data:
+                            logger.info(f"✅ 프로필 데이터 추출 성공: {profile_data['username']}")
                             break
                     
                     # 프로필 데이터가 없으면 기본 프로필 생성
@@ -258,14 +283,56 @@ class BrightDataService:
                         logger.warning(f"⚠️ {username} 프로필 데이터 추출 실패 - 기본 프로필 생성")
                         profile_data = self._create_default_profile(username)
                     
+                    # 추출된 프로필 데이터 저장
+                    if profile_data:
+                        try:
+                            extracted_json_path, extracted_csv_path = self._save_snapshot_data([profile_data], username, f"{data_type}_single_extracted")
+                            logger.info(f"📁 추출된 single {data_type} 데이터 저장: JSON={extracted_json_path}, CSV={extracted_csv_path}")
+                        except Exception as save_error:
+                            logger.error(f"❌ 추출된 데이터 저장 실패: {str(save_error)}")
+                    
+                    # 데이터베이스에 프로필 저장
+                    try:
+                        saved_profile = self.influencer_service.create_or_update_profile(profile_data, username)
+                        logger.info(f"💾 프로필 데이터베이스 저장 완료: {saved_profile.username} (ID: {saved_profile.id})")
+                    except Exception as db_error:
+                        logger.error(f"❌ 프로필 데이터베이스 저장 실패: {str(db_error)}")
+                    
                     logger.info(f"✅ {data_type} 수집 성공: {username}")
                     return {"profile": profile_data}
                 
                 elif data_type == "reels":
+                    # 원본 데이터 저장 (파싱 전)
+                    try:
+                        json_path, csv_path = self._save_snapshot_data(raw_data, username, f"{data_type}_single")
+                        logger.info(f"📁 원본 single {data_type} 데이터 저장: JSON={json_path}, CSV={csv_path}")
+                    except Exception as save_error:
+                        logger.error(f"❌ 원본 데이터 저장 실패: {str(save_error)}")
+                    
                     reels_data = []
                     processed_items = 0
                     
+                    # BrightData 래핑된 데이터 구조 처리
+                    actual_data = []
                     for item in raw_data:
+                        if isinstance(item, dict) and item.get('type') == 'direct_data' and 'data' in item:
+                            # 래핑된 데이터 언래핑
+                            actual_data.extend(item['data'])
+                        elif isinstance(item, dict):
+                            # 직접 데이터
+                            actual_data.append(item)
+                    
+                    logger.info(f"📊 {data_type} 데이터 언래핑: {len(raw_data)}개 → {len(actual_data)}개")
+                    
+                    # 언래핑된 데이터도 저장
+                    if actual_data:
+                        try:
+                            unwrapped_json_path, unwrapped_csv_path = self._save_snapshot_data(actual_data, username, f"{data_type}_single_unwrapped")
+                            logger.info(f"📁 언래핑된 single {data_type} 데이터 저장: JSON={unwrapped_json_path}, CSV={unwrapped_csv_path}")
+                        except Exception as save_error:
+                            logger.error(f"❌ 언래핑된 데이터 저장 실패: {str(save_error)}")
+                    
+                    for item in actual_data:
                         # 타입 검증 추가
                         if not isinstance(item, dict):
                             logger.warning(f"⚠️ 릴스 데이터 타입 스킵: {type(item)} - {str(item)[:100]}")
@@ -277,15 +344,32 @@ class BrightDataService:
                                 reel = self._extract_reel_from_item(item, username)
                                 if reel:
                                     reels_data.append(reel)
+                                    logger.info(f"✅ 릴스 파싱 성공: {reel['reel_id']} | 조회수: {reel['views']}")
                         except Exception as item_error:
                             logger.warning(f"⚠️ 릴스 아이템 처리 오류: {str(item_error)}")
                             continue
                     
                     logger.info(f"📊 {data_type} 처리 완료: 처리된 아이템 {processed_items}개, 릴스 {len(reels_data)}개")
                     
+                    # 추출된 릴스 데이터 저장
+                    if reels_data:
+                        try:
+                            extracted_json_path, extracted_csv_path = self._save_snapshot_data(reels_data, username, f"{data_type}_single_extracted")
+                            logger.info(f"📁 추출된 single {data_type} 데이터 저장: JSON={extracted_json_path}, CSV={extracted_csv_path}")
+                        except Exception as save_error:
+                            logger.error(f"❌ 추출된 데이터 저장 실패: {str(save_error)}")
+                    
                     # 절대로 테스트 데이터를 생성하지 않음 (명시적 금지)
                     if not reels_data:
-                        logger.warning(f"⚠️ {username} 실제 릴스 데이터가 없음 - 테스트 데이터 생성하지 않음")
+                        logger.warning(f"⚠️ {username} 실제 릴스 데이터가 없음 - 원시 데이터 분석")
+                        logger.warning(f"🔍 원시 데이터 샘플 (처음 3개): {raw_data[:3] if raw_data else '없음'}")
+                        
+                        # 원시 데이터 구조 분석
+                        if raw_data:
+                            for i, item in enumerate(raw_data[:5]):
+                                logger.warning(f"   [{i}] 타입: {type(item)}, 키: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
+                                if isinstance(item, dict):
+                                    logger.warning(f"       _is_reel_item: {self._is_reel_item(item)}")
                         reels_data = []
                     
                     logger.info(f"✅ {data_type} 수집 성공: {username} - {len(reels_data)}개 릴스")
@@ -421,10 +505,32 @@ class BrightDataService:
                     if data and len(data) > 0:
                         # 데이터 유형별 처리
                         if data_type == "profile":
+                            # 원본 데이터 저장 (데이터베이스 저장 전)
+                            try:
+                                json_path, csv_path = self._save_snapshot_data(data, username, data_type)
+                                logger.info(f"📁 원본 {data_type} 데이터 저장: JSON={json_path}, CSV={csv_path}")
+                            except Exception as save_error:
+                                logger.error(f"❌ 원본 데이터 저장 실패: {str(save_error)}")
+                            
                             profile_data = self._extract_profile_from_brightdata(data, username)
                             if profile_data:
                                 collected_data["profile"] = profile_data
                                 logger.info(f"✅ 프로필 데이터 추출 완료")
+                                
+                                # 추출된 프로필 데이터도 별도 저장
+                                try:
+                                    extracted_json_path, extracted_csv_path = self._save_snapshot_data([profile_data], username, f"{data_type}_extracted")
+                                    logger.info(f"📁 추출된 {data_type} 데이터 저장: JSON={extracted_json_path}, CSV={extracted_csv_path}")
+                                except Exception as save_error:
+                                    logger.error(f"❌ 추출된 데이터 저장 실패: {str(save_error)}")
+                                
+                                # 데이터베이스에 프로필 저장
+                                try:
+                                    saved_profile = self.influencer_service.create_or_update_profile(profile_data, username)
+                                    logger.info(f"💾 프로필 데이터베이스 저장 완료: {saved_profile.username} (ID: {saved_profile.id})")
+                                except Exception as db_error:
+                                    logger.error(f"❌ 프로필 데이터베이스 저장 실패: {str(db_error)}")
+                                
                                 # 세부 진행상황 업데이트
                                 if current_session_id:
                                     await progress_service.send_detail_progress(
@@ -442,9 +548,25 @@ class BrightDataService:
                                 )
                         
                         elif data_type == "reels":
+                            # 원본 데이터 저장 (데이터베이스 저장 전)
+                            try:
+                                json_path, csv_path = self._save_snapshot_data(data, username, data_type)
+                                logger.info(f"📁 원본 {data_type} 데이터 저장: JSON={json_path}, CSV={csv_path}")
+                            except Exception as save_error:
+                                logger.error(f"❌ 원본 데이터 저장 실패: {str(save_error)}")
+                            
                             reels_data = self._extract_reels_from_brightdata(data, username)
                             collected_data["reels"].extend(reels_data)
                             logger.info(f"✅ 릴스 데이터 추출 완료: {len(reels_data)}개")
+                            
+                            # 추출된 릴스 데이터도 별도 저장
+                            if reels_data:
+                                try:
+                                    extracted_json_path, extracted_csv_path = self._save_snapshot_data(reels_data, username, f"{data_type}_extracted")
+                                    logger.info(f"📁 추출된 {data_type} 데이터 저장: JSON={extracted_json_path}, CSV={extracted_csv_path}")
+                                except Exception as save_error:
+                                    logger.error(f"❌ 추출된 데이터 저장 실패: {str(save_error)}")
+                            
                             # 세부 진행상황 업데이트
                             if current_session_id:
                                 await progress_service.send_detail_progress(
@@ -470,6 +592,12 @@ class BrightDataService:
             # 기본 프로필이 없으면 생성
             if not collected_data["profile"]:
                 collected_data["profile"] = self._create_default_profile(username)
+                # 기본 프로필도 데이터베이스에 저장
+                try:
+                    saved_profile = self.influencer_service.create_or_update_profile(collected_data["profile"], username)
+                    logger.info(f"💾 기본 프로필 데이터베이스 저장 완료: {saved_profile.username} (ID: {saved_profile.id})")
+                except Exception as db_error:
+                    logger.error(f"❌ 기본 프로필 데이터베이스 저장 실패: {str(db_error)}")
             
             # 절대로 테스트 데이터를 생성하지 않음 (명시적 금지)
             if len(collected_data["reels"]) == 0:
@@ -507,6 +635,13 @@ class BrightDataService:
                 # 프로필 정보 추출 (보통 첫 번째 아이템에 있음)
                 if not profile_data and options.get("collectProfile", True):
                     profile_data = self._extract_profile_from_item(item, username)
+                    if profile_data:
+                        # 데이터베이스에 프로필 저장
+                        try:
+                            saved_profile = self.influencer_service.create_or_update_profile(profile_data, username)
+                            logger.info(f"💾 프로필 데이터베이스 저장 완료: {saved_profile.username} (ID: {saved_profile.id})")
+                        except Exception as db_error:
+                            logger.error(f"❌ 프로필 데이터베이스 저장 실패: {str(db_error)}")
                 
                 # 게시물/릴스 데이터 추출
                 if self._is_post_item(item):
@@ -527,6 +662,12 @@ class BrightDataService:
         # 기본 프로필 생성 (데이터가 없으면)
         if not profile_data and options.get("collectProfile", True):
             profile_data = self._create_default_profile(username)
+            # 기본 프로필도 데이터베이스에 저장
+            try:
+                saved_profile = self.influencer_service.create_or_update_profile(profile_data, username)
+                logger.info(f"💾 기본 프로필 데이터베이스 저장 완료: {saved_profile.username} (ID: {saved_profile.id})")
+            except Exception as db_error:
+                logger.error(f"❌ 기본 프로필 데이터베이스 저장 실패: {str(db_error)}")
         
         result = {
             "profile": profile_data,
@@ -540,42 +681,59 @@ class BrightDataService:
     def _extract_profile_from_item(self, item: Dict, username: str) -> Optional[Dict]:
         """아이템에서 프로필 정보를 추출합니다."""
         try:
+            logger.debug(f"프로필 추출 시작: {username}")
+            
             # 데이터 타입 검증
             if not isinstance(item, dict):
                 logger.warning(f"⚠️ 프로필 추출 스킵: 딕셔너리가 아닌 데이터 타입 {type(item)}")
                 return None
+            
+            logger.debug(f"BrightData 원시 데이터 키들: {list(item.keys())}")
+            
+            # 🔧 BrightData 중첩 구조 처리 (type: "direct_data", data: [...])
+            actual_item = item
+            if item.get("type") == "direct_data" and "data" in item:
+                data_list = item["data"]
+                if isinstance(data_list, list) and len(data_list) > 0:
+                    actual_item = data_list[0]  # 첫 번째 데이터 항목 사용
+                    logger.debug(f"중첩 구조 감지: direct_data -> 실제 데이터 추출")
+                else:
+                    logger.warning(f"direct_data 구조이지만 data가 비어있음")
+                    return None
                 
-                
-            # BrightData Instagram 데이터 구조에 맞춰 프로필 정보 추출
+            # 🔧 BrightData 실제 응답 구조에 맞춘 올바른 필드 매핑
+            extracted_username = actual_item.get("account") or actual_item.get("user_posted") or actual_item.get("username") or actual_item.get("user_name") or username
+            extracted_full_name = actual_item.get("full_name") or actual_item.get("profile_name") or actual_item.get("name") or actual_item.get("display_name") or extracted_username
+            
             profile = {
-                "username": item.get("user_posted") or item.get("username") or username,
-                "full_name": item.get("full_name") or item.get("user_posted") or username,
-                "followers": self._safe_int(item.get("followers_count") or item.get("followers")),
-                "following": self._safe_int(item.get("following_count") or item.get("following")),
-                "bio": item.get("bio") or item.get("biography", ""),
-                "profile_pic_url": item.get("profile_pic_url") or item.get("avatar_url") or "",
-                "account": item.get("account_type", "personal"),
-                "posts_count": self._safe_int(item.get("posts_count") or item.get("media_count")),
-                "avg_engagement": self._safe_float(item.get("avg_engagement", 0)),
-                "category_name": item.get("category") or "",
-                "profile_name": item.get("profile_name") or username,
-                "email_address": item.get("email"),
-                "is_business_account": item.get("is_business", False),
-                "is_professional_account": item.get("is_professional", False),
-                "is_verified": item.get("is_verified", False)
+                "username": extracted_username,
+                "full_name": extracted_full_name,
+                "followers": self._safe_int(actual_item.get("followers") or actual_item.get("follower_count") or actual_item.get("followers_count") or actual_item.get("followers_total") or actual_item.get("subscriber_count")),
+                "following": self._safe_int(actual_item.get("following") or actual_item.get("following_count") or actual_item.get("follows_count") or actual_item.get("followings")),
+                "bio": actual_item.get("biography") or actual_item.get("bio") or actual_item.get("description") or "",
+                "profile_pic_url": actual_item.get("profile_image_link") or actual_item.get("profile_pic_url") or actual_item.get("avatar_url") or actual_item.get("profile_picture") or "",
+                "account": "business" if actual_item.get("is_business_account") or actual_item.get("business_account") else "personal",
+                "posts_count": self._safe_int(actual_item.get("posts_count") or actual_item.get("media_count") or actual_item.get("post_count")),
+                "avg_engagement": self._safe_float(actual_item.get("avg_engagement") or actual_item.get("engagement_rate") or 0),
+                "category_name": actual_item.get("category_name") or actual_item.get("business_category_name") or actual_item.get("category") or "",
+                "profile_name": extracted_full_name,
+                "email_address": actual_item.get("email_address") or actual_item.get("email"),
+                "is_business_account": bool(actual_item.get("is_business_account") or actual_item.get("business_account")),
+                "is_professional_account": bool(actual_item.get("is_professional_account") or actual_item.get("professional_account")),
+                "is_verified": bool(actual_item.get("is_verified") or actual_item.get("verified"))
             }
             
-            # 유효한 데이터가 있는지 확인 (더 관대한 검증)
-            # username이 있거나, 최소한 full_name이 있으면 유효한 프로필로 간주
-            if profile["username"] or profile["full_name"]:
-                # username이 없으면 URL에서 추출한 username 사용
-                if not profile["username"]:
-                    profile["username"] = username
-                    
-                logger.info(f"👤 프로필 추출 성공: {profile['username']} (팔로워: {profile['followers']})")
+            # 유효한 데이터가 있는지 확인 - BrightData 응답에 맞춘 검증
+            # extracted_username이나 extracted_full_name 중 하나라도 실제 값이 있으면 유효
+            if (extracted_username and extracted_username != username) or (extracted_full_name and extracted_full_name != extracted_username):
+                logger.info(f"👤 프로필 추출 성공: {profile['username']} (팔로워: {profile['followers']}) - {profile['full_name']}")
+                return profile
+            elif extracted_username == username and profile["followers"] > 0:
+                # username은 같지만 팔로워 수가 있으면 유효한 프로필
+                logger.info(f"👤 프로필 추출 성공 (팔로워 기반): {profile['username']} (팔로워: {profile['followers']})")
                 return profile
             else:
-                logger.info(f"⚠️ 프로필 데이터 불완전: {profile}")
+                logger.warning(f"⚠️ 프로필 데이터 불완전 - username: {extracted_username}, full_name: {extracted_full_name}, followers: {profile['followers']}")
                 return None
                 
         except Exception as e:
@@ -594,6 +752,19 @@ class BrightDataService:
         """아이템이 릴스인지 확인합니다."""
         if not isinstance(item, dict):
             return False
+        
+        # BrightData 릴스 특성 확인
+        # 1. video_play_count나 views 필드가 있으면 릴스
+        if item.get("video_play_count") or item.get("views"):
+            return True
+            
+        # 2. description 필드가 있고 likes, num_comments가 있으면 릴스 (BrightData 구조)
+        if (item.get("description") and 
+            (item.get("likes") is not None or item.get("num_comments") is not None) and
+            item.get("user_posted")):
+            return True
+            
+        # 3. 기존 로직도 유지
         media_type = item.get("media_type", "").lower()
         content_type = item.get("content_type", "").lower()
         return media_type == "video" or content_type == "reel" or "reel" in str(item.get("url", ""))
@@ -668,8 +839,15 @@ class BrightDataService:
                         return item[field]
                 return None
             
-            reel_id = get_field_value(item, "id", "shortcode", "reel_id", "pk") or f"{username}_reel_{hash(str(item))}"
-            caption = get_field_value(item, "caption", "text", "description", "edge_media_to_caption")
+            # BrightData 구조에 맞는 ID 생성 (URL에서 추출)
+            reel_url = item.get("url", "")
+            if "/p/" in reel_url:
+                reel_id = reel_url.split("/p/")[1].split("/")[0]
+            else:
+                reel_id = get_field_value(item, "id", "shortcode", "reel_id", "pk") or f"{username}_reel_{hash(str(item))}"
+            
+            # BrightData는 description 필드 사용
+            caption = get_field_value(item, "description", "caption", "text", "edge_media_to_caption")
             
             # edge_media_to_caption 구조 처리 (Instagram Graph API 형식)
             if isinstance(caption, dict) and "edges" in caption:
@@ -692,25 +870,32 @@ class BrightDataService:
             if thumbnail_url:
                 media_urls = [thumbnail_url]
 
+            # BrightData 구조에 맞는 해시태그 처리
+            hashtags = item.get("hashtags", [])
+            if not hashtags and caption:
+                hashtags = self._extract_hashtags(caption)
+            elif not isinstance(hashtags, list):
+                hashtags = []
+            
             reel = {
                 "reel_id": reel_id,
                 "id": reel_id,  # API 호환성을 위해 추가
                 "media_type": "VIDEO",
                 "media_urls": media_urls,
                 "caption": caption or "",
-                "timestamp": get_field_value(item, "timestamp", "taken_at", "taken_at_timestamp", "date_posted"),
+                "timestamp": get_field_value(item, "date_posted", "timestamp", "taken_at", "taken_at_timestamp"),
                 "user_posted": get_field_value(item, "user_posted", "username", "owner") or username,
                 "profile_url": get_field_value(item, "profile_url") or f"https://instagram.com/{username}",
                 "date_posted": get_field_value(item, "date_posted", "date", "taken_at"),
-                "num_comments": self._safe_int(get_field_value(item, "comment_count", "comments_count", "num_comments", "edge_media_to_comment")),
-                "likes": self._safe_int(get_field_value(item, "like_count", "likes_count", "likes", "edge_liked_by")),
+                "num_comments": self._safe_int(get_field_value(item, "num_comments", "comment_count", "comments_count", "edge_media_to_comment")),
+                "likes": self._safe_int(get_field_value(item, "likes", "like_count", "likes_count", "edge_liked_by")),
                 "photos": [],
                 "content_type": "reel",
                 "description": caption or "",
-                "hashtags": self._extract_hashtags(caption or ""),
-                "url": get_field_value(item, "url", "permalink") or f"https://instagram.com/reel/{item.get('shortcode', reel_id)}",
-                "views": self._safe_int(get_field_value(item, "view_count", "views_count", "views", "play_count", "video_view_count")),
-                "video_play_count": self._safe_int(get_field_value(item, "play_count", "video_play_count", "views", "view_count")),
+                "hashtags": hashtags,
+                "url": get_field_value(item, "url", "permalink") or f"https://instagram.com/reel/{reel_id}",
+                "views": self._safe_int(get_field_value(item, "views", "view_count", "views_count", "play_count", "video_view_count")),
+                "video_play_count": self._safe_int(get_field_value(item, "video_play_count", "play_count", "views", "view_count")),
                 "thumbnail_url": thumbnail_url or (media_urls[0] if media_urls else None)
             }
             
@@ -729,6 +914,7 @@ class BrightDataService:
     
     def _create_default_profile(self, username: str) -> Dict:
         """기본 프로필을 생성합니다."""
+        logger.info(f"기본 프로필 생성: {username}")
         return {
             "username": username,
             "full_name": f"{username.title()}",
@@ -1130,6 +1316,12 @@ class BrightDataService:
                 "is_professional_account": False,
                 "is_verified": False
             }
+            # 기본 프로필도 데이터베이스에 저장
+            try:
+                saved_profile = self.influencer_service.create_or_update_profile(profile_data, username)
+                logger.info(f"💾 기본 프로필 데이터베이스 저장 완료: {saved_profile.username} (ID: {saved_profile.id})")
+            except Exception as db_error:
+                logger.error(f"❌ 기본 프로필 데이터베이스 저장 실패: {str(db_error)}")
         
         result = {
             "profile": profile_data,
@@ -1330,3 +1522,78 @@ class BrightDataService:
         except Exception as e:
             logger.error(f"릴스 데이터 추출 오류: {str(e)}")
             return []
+    
+    def _save_snapshot_data(self, data: Any, username: str, data_type: str) -> tuple[str, str]:
+        """스냅샷 데이터를 JSON과 CSV 파일로 저장"""
+        timestamp = now_kst().strftime("%Y%m%d_%H%M%S")
+        
+        # JSON 파일 저장
+        json_filename = f"{username}_{data_type}_{timestamp}.json"
+        json_path = self.snapshot_dir / json_filename
+        
+        try:
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2, default=str)
+            logger.info(f"📁 JSON 파일 저장 완료: {json_path}")
+        except Exception as e:
+            logger.error(f"❌ JSON 파일 저장 실패: {str(e)}")
+            json_path = None
+        
+        # CSV 파일 저장 (플랫한 데이터만)
+        csv_filename = f"{username}_{data_type}_{timestamp}.csv"
+        csv_path = self.snapshot_dir / csv_filename
+        
+        try:
+            csv_data = self._flatten_data_for_csv(data, data_type)
+            if csv_data:
+                with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+                    if csv_data:
+                        writer = csv.DictWriter(f, fieldnames=csv_data[0].keys())
+                        writer.writeheader()
+                        writer.writerows(csv_data)
+                logger.info(f"📁 CSV 파일 저장 완료: {csv_path}")
+            else:
+                csv_path = None
+                logger.warning(f"⚠️ CSV 변환할 데이터가 없음: {data_type}")
+        except Exception as e:
+            logger.error(f"❌ CSV 파일 저장 실패: {str(e)}")
+            csv_path = None
+        
+        return str(json_path) if json_path else None, str(csv_path) if csv_path else None
+    
+    def _flatten_data_for_csv(self, data: Any, data_type: str) -> List[Dict]:
+        """CSV 저장을 위해 데이터를 플랫하게 변환"""
+        try:
+            if not data:
+                return []
+            
+            flattened = []
+            
+            if isinstance(data, list):
+                for item in data:
+                    if isinstance(item, dict):
+                        flat_item = self._flatten_dict(item)
+                        flattened.append(flat_item)
+            elif isinstance(data, dict):
+                flat_item = self._flatten_dict(data)
+                flattened.append(flat_item)
+            
+            return flattened
+            
+        except Exception as e:
+            logger.error(f"❌ CSV 데이터 변환 실패: {str(e)}")
+            return []
+    
+    def _flatten_dict(self, d: Dict, parent_key: str = '', sep: str = '_') -> Dict:
+        """중첩된 딕셔너리를 플랫하게 변환"""
+        items = []
+        for k, v in d.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            if isinstance(v, dict):
+                items.extend(self._flatten_dict(v, new_key, sep=sep).items())
+            elif isinstance(v, list):
+                # 리스트는 문자열로 변환
+                items.append((new_key, json.dumps(v, ensure_ascii=False)))
+            else:
+                items.append((new_key, v))
+        return dict(items)

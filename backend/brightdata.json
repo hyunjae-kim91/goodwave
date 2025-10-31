@@ -3,7 +3,9 @@
         "profile": {
             "dataset_id": "gd_l1vikfch901nx3by4",
             "params": {
-                "include_errors": "true"
+                "include_errors": "true",
+                "type": "discover_new",
+                "discover_by": "user_name"
             }
         },
         "post": {

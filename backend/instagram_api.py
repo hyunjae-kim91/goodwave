@@ -20,8 +20,9 @@ class Instagram:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        full_params = {"dataset_id": dataset_id, **params}
-        response = requests.post(url, headers=headers, params=full_params, json=data)
+        # BrightData 요청 형식: URL params + JSON body
+        url_params = {"dataset_id": dataset_id, **params}
+        response = requests.post(url, headers=headers, params=url_params, json=data)
         
         print(f"📡 BrightData API 응답 상태: {response.status_code}")
         print(f"📋 응답 헤더: {dict(response.headers)}")
@@ -55,11 +56,11 @@ class Instagram:
         if data_type in ["posts", "reels"]:
             min_wait_time = 5    # 게시물/릴스는 5초 대기
             max_wait_time = 600  # 릴스는 최대 10분 (600초)
-            check_interval = 5   # 5초 간격
+            check_interval = 60  # 1분 간격
         else:
             min_wait_time = 0    # 프로필은 즉시 확인 시작
-            max_wait_time = 60   # 프로필은 최대 1분
-            check_interval = 5   # 5초 간격
+            max_wait_time = 300  # 프로필은 최대 5분 (BrightData 서버 문제 대응)
+            check_interval = 10  # 10초 간격 (서버 부하 줄이기)
         
         wait_count = 0
         
@@ -114,6 +115,15 @@ class Instagram:
                         
                         elif isinstance(result, dict):
                             print(f"🔍 {data_type.upper()} 응답 키: {list(result.keys())}")
+                            
+                            # 프로필 데이터가 직접 딕셔너리로 온 경우 (status 필드 없음)
+                            if data_type == "profile" and "account" in result and "followers" in result:
+                                print(f"✅ {data_type.title()} 데이터가 직접 딕셔너리로 반환됨")
+                                if session_id:
+                                    from app.services.progress_service import progress_service
+                                    progress_service.update_progress(session_id, f"{data_type}_collection", 100, f"{data_type.title()} 데이터 수집 완료")
+                                return {"type": "direct_data", "data": [result]}  # 리스트로 래핑
+                            
                             if "file_urls" in result:
                                 print(f"🔍 file_urls 타입: {type(result['file_urls'])}, 내용: {result['file_urls']}")
                             
@@ -213,12 +223,37 @@ class Instagram:
                 
                 if 'application/json' in content_type:
                     data = res.json()
+                    
+                    # 🔍 BrightData 응답 요약 로깅
+                    if isinstance(data, list):
+                        print(f"📊 BrightData 리스트 응답: {len(data)}개 항목")
+                        if len(data) > 0 and isinstance(data[0], dict):
+                            print(f"   첫 번째 항목 키들: {list(data[0].keys())}")
+                            # 중요 필드만 로깅
+                            if 'account' in data[0]:
+                                print(f"   Account: {data[0].get('account')}")
+                            if 'followers' in data[0]:
+                                print(f"   Followers: {data[0].get('followers')}")
+                    elif isinstance(data, dict):
+                        print(f"📊 BrightData 딕셔너리 응답: {list(data.keys())}")
+                    else:
+                        print(f"⚠️ 예상치 못한 응답 타입: {type(data)}")
+                    
                     if isinstance(data, list):
                         all_data.extend(data)
                         print(f"✅ JSON 리스트 데이터 추가: {len(data)}개 항목")
                     else:
                         all_data.append(data)
                         print(f"✅ JSON 객체 데이터 추가: 1개 항목")
+                elif 'text/csv' in content_type or 'text/plain' in content_type:
+                    # CSV 형태 응답 처리
+                    print(f"📊 CSV 응답 감지, CSV 파싱 시작")
+                    csv_data = self._parse_csv_response(res.text)
+                    if csv_data:
+                        all_data.extend(csv_data)
+                        print(f"✅ CSV 데이터 파싱 완료: {len(csv_data)}개 항목")
+                    else:
+                        print(f"❌ CSV 파싱 실패")
                 else:
                     # JSON이 아닌 경우 텍스트로 읽어 JSON Lines 파싱 시도
                     text_data = res.text.strip()
@@ -243,6 +278,55 @@ class Instagram:
         
         print(f"✅ 데이터 다운로드 완료: {len(all_data)}개 항목")
         return all_data
+    
+    def _parse_csv_response(self, csv_text: str):
+        """CSV 응답을 JSON 형태로 변환"""
+        try:
+            import csv
+            import io
+            import json
+            
+            # CSV 헤더와 데이터 파싱
+            csv_reader = csv.DictReader(io.StringIO(csv_text))
+            csv_data = []
+            
+            for row in csv_reader:
+                # 빈 값들을 None으로 변환
+                processed_row = {}
+                for key, value in row.items():
+                    if value == '' or value is None:
+                        processed_row[key] = None
+                    elif value.isdigit():
+                        processed_row[key] = int(value)
+                    elif value.lower() in ['true', 'false']:
+                        processed_row[key] = value.lower() == 'true'
+                    else:
+                        # JSON 문자열인 경우 파싱 시도
+                        if value and (value.startswith('[') or value.startswith('{')):
+                            try:
+                                processed_row[key] = json.loads(value)
+                            except:
+                                processed_row[key] = value
+                        else:
+                            processed_row[key] = value
+                
+                csv_data.append(processed_row)
+            
+            print(f"📊 CSV 파싱 완료: {len(csv_data)}개 행 처리됨")
+            if csv_data:
+                print(f"   첫 번째 행 키들: {list(csv_data[0].keys())}")
+                # 중요 필드 확인
+                first_row = csv_data[0]
+                if 'account' in first_row:
+                    print(f"   Account: {first_row.get('account')}")
+                if 'followers' in first_row:
+                    print(f"   Followers: {first_row.get('followers')}")
+            
+            return csv_data
+            
+        except Exception as e:
+            print(f"❌ CSV 파싱 에러: {str(e)}")
+            return []
 
     async def get_reel_data(self, reel_url: str, config: dict) -> dict:
         """인스타그램 릴스 URL에서 데이터를 수집합니다. (캠페인용)"""
