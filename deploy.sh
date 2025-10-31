@@ -53,8 +53,8 @@ if [ ! -f "$ENV_FILE" ]; then
     
     # .env 템플릿 생성
     cat > "$ENV_FILE" << 'EOL'
-# 데이터베이스 설정
-DATABASE_URL=postgresql://postgres:your_password@goodwave_postgres:5432/goodwave_db
+# AWS RDS PostgreSQL 데이터베이스 설정
+DATABASE_URL=postgresql://DB_USER:DB_PASSWORD@RDS_ENDPOINT:5432/DB_NAME
 
 # 외부 API 키
 BRIGHTDATA_API_KEY=your_brightdata_api_key
@@ -121,47 +121,68 @@ docker-compose build --no-cache
 
 log_success "✅ Docker 이미지 빌드 완료"
 
-# 5. 데이터베이스 초기화 (PostgreSQL)
-log_info "🗄️ 데이터베이스 초기화 중..."
+# 5. AWS RDS 데이터베이스 연결 확인 및 초기화
+log_info "🗄️ AWS RDS 데이터베이스 초기화 중..."
 
-# PostgreSQL 컨테이너만 먼저 시작
-docker-compose up -d postgres redis
+# Redis 컨테이너 시작
+docker-compose up -d redis
 
-# PostgreSQL이 준비될 때까지 대기
-log_info "⏳ PostgreSQL 준비 대기 중..."
-for i in {1..30}; do
-    if docker-compose exec -T postgres pg_isready -U postgres &>/dev/null; then
-        log_success "✅ PostgreSQL 준비 완료"
-        break
-    fi
-    echo -n "."
-    sleep 2
-done
+# Redis가 준비될 때까지 대기
+log_info "⏳ Redis 준비 대기 중..."
+sleep 3
+log_success "✅ Redis 준비 완료"
 
-# 데이터베이스 및 테이블 생성
-log_info "📊 데이터베이스 스키마 초기화 중..."
+# AWS RDS 연결 확인 및 테이블 생성
+log_info "📊 AWS RDS 연결 확인 및 스키마 초기화 중..."
 
-# 백엔드 컨테이너 임시 실행하여 테이블 생성
+# 백엔드 컨테이너 임시 실행하여 RDS 연결 및 테이블 생성
 docker-compose run --rm backend python -c "
 from app.db.models import Base
 from app.db.database import engine
-print('데이터베이스 테이블 생성 중...')
-Base.metadata.create_all(bind=engine)
-print('✅ 데이터베이스 테이블 생성 완료')
+from sqlalchemy import text
+import sys
+
+try:
+    # RDS 연결 테스트
+    print('AWS RDS 연결 테스트 중...')
+    with engine.connect() as conn:
+        conn.execute(text('SELECT 1'))
+    print('✅ AWS RDS 연결 성공')
+    
+    # 테이블 생성
+    print('데이터베이스 테이블 생성 중...')
+    Base.metadata.create_all(bind=engine)
+    print('✅ 데이터베이스 테이블 생성 완료')
+    
+    # Instagram 등급 임계값 초기 데이터 삽입
+    print('초기 데이터 삽입 중...')
+    with engine.connect() as conn:
+        conn.execute(text('''
+            INSERT INTO instagram_grade_thresholds (grade_name, min_view_count, max_view_count, created_at, updated_at) 
+            VALUES 
+                ('프리미엄', 100001, NULL, NOW(), NOW()),
+                ('골드', 30001, 100000, NOW(), NOW()),
+                ('블루', 5001, 30000, NOW(), NOW()),
+                ('레드', 1000, 5000, NOW(), NOW())
+            ON CONFLICT (grade_name) DO NOTHING
+        '''))
+        conn.commit()
+    print('✅ 초기 데이터 삽입 완료')
+    
+except Exception as e:
+    print(f'❌ 데이터베이스 초기화 실패: {str(e)}')
+    print('💡 .env 파일의 DATABASE_URL이 올바른 AWS RDS 엔드포인트를 가리키는지 확인하세요.')
+    sys.exit(1)
 "
 
-# Instagram 등급 임계값 초기 데이터 삽입
-docker-compose exec -T postgres psql -U postgres -d goodwave_db << 'EOF'
-INSERT INTO instagram_grade_thresholds (grade_name, min_view_count, max_view_count, created_at, updated_at) 
-VALUES 
-    ('프리미엄', 100001, NULL, NOW(), NOW()),
-    ('골드', 30001, 100000, NOW(), NOW()),
-    ('블루', 5001, 30000, NOW(), NOW()),
-    ('레드', 1000, 5000, NOW(), NOW())
-ON CONFLICT (grade_name) DO NOTHING;
-EOF
+if [ $? -ne 0 ]; then
+    log_error "❌ AWS RDS 데이터베이스 초기화 실패"
+    log_error "💡 .env 파일의 DATABASE_URL 설정을 확인하세요."
+    log_error "   형식: postgresql://USER:PASSWORD@RDS_ENDPOINT:5432/DB_NAME"
+    exit 1
+fi
 
-log_success "✅ 데이터베이스 초기화 완료"
+log_success "✅ AWS RDS 데이터베이스 초기화 완료"
 
 # 6. 전체 서비스 시작
 log_info "🚀 전체 서비스 시작 중..."
@@ -193,6 +214,16 @@ for i in {1..15}; do
     sleep 2
 done
 
+# Nginx 헬스체크
+for i in {1..15}; do
+    if curl -s http://localhost:80 &>/dev/null; then
+        log_success "✅ Nginx 리버스 프록시 준비 완료"
+        break
+    fi
+    echo -n "."
+    sleep 2
+done
+
 # 7. 크론 작업 설정 (백엔드 컨테이너 내부)
 log_info "⏰ 크론 작업 설정 중..."
 
@@ -215,26 +246,29 @@ docker-compose ps
 
 echo ""
 echo "🌐 서비스 접속 정보:"
-echo "  - 프론트엔드: http://localhost:3000"
-echo "  - 백엔드 API: http://localhost:8000"
+echo "  - Nginx (리버스 프록시): http://localhost:80"
+echo "  - 프론트엔드 (직접): http://localhost:3000"
+echo "  - 백엔드 API (직접): http://localhost:8000"
 echo "  - API 문서: http://localhost:8000/docs"
 echo "  - 백엔드 헬스체크: http://localhost:8000/health"
 
 echo ""
 echo "📋 로그 확인 명령어:"
 echo "  - 전체 로그: docker-compose logs -f"
+echo "  - Nginx 로그: docker-compose logs -f nginx"
 echo "  - 백엔드 로그: docker-compose logs -f backend"
 echo "  - 프론트엔드 로그: docker-compose logs -f frontend"
-echo "  - 데이터베이스 로그: docker-compose logs -f postgres"
+echo "  - Redis 로그: docker-compose logs -f redis"
 
 echo ""
 log_success "🎉 Goodwave Report 배포 완료!"
 echo ""
 echo "⚠️  중요 사항:"
-echo "   1. .env 파일의 모든 API 키가 올바르게 설정되었는지 확인하세요"
-echo "   2. 방화벽에서 포트 3000, 8000이 열려있는지 확인하세요"
-echo "   3. 프로덕션 환경에서는 HTTPS 설정을 권장합니다"
-echo "   4. 정기적인 백업을 설정하세요"
+echo "   1. .env 파일의 모든 API 키와 AWS RDS 연결 정보가 올바르게 설정되었는지 확인하세요"
+echo "   2. AWS RDS 보안 그룹에서 배포 서버의 IP가 허용되었는지 확인하세요"
+echo "   3. 방화벽에서 포트 80 (Nginx), 3000 (프론트엔드), 8000 (백엔드)이 열려있는지 확인하세요"
+echo "   4. 프로덕션 환경에서는 Nginx에 HTTPS(SSL/TLS) 설정을 권장합니다"
+echo "   5. AWS RDS 자동 백업이 활성화되어 있는지 확인하세요"
 echo ""
 echo "📚 추가 도움말:"
 echo "   - 서비스 중지: docker-compose down"
