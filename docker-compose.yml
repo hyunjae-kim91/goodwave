@@ -60,6 +60,21 @@ services:
     networks:
       - goodwave-network
 
+  # Nginx 리버스 프록시
+  nginx:
+    image: nginx:alpine
+    container_name: goodwave_nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - goodwave-network
+
 networks:
   goodwave-network:
     driver: bridge

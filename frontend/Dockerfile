@@ -7,8 +7,9 @@ WORKDIR /app
 # package.json과 package-lock.json 복사 (캐싱 최적화)
 COPY package*.json ./
 
-# 의존성 설치
-RUN npm install
+# 의존성 설치 (캐시 정리 포함)
+RUN npm ci --only=production --no-audit --prefer-offline && \
+    npm cache clean --force
 
 # 소스 코드 복사
 COPY . .
