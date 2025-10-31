@@ -416,7 +416,7 @@ const InstagramPostReport: React.FC = () => {
   const handleShare = () => {
     if (!selectedCampaign) return;
     
-    const shareUrl = `${window.location.origin}/reports/instagram/posts/${encodeURIComponent(selectedCampaign)}`;
+    const shareUrl = `${window.location.origin}/#/reports/instagram/posts/${encodeURIComponent(selectedCampaign)}`;
     
     // 클립보드 API 사용 가능 여부 확인
     if (navigator.clipboard && navigator.clipboard.writeText) {

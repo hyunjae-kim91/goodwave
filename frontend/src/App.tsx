@@ -8,6 +8,7 @@ import CampaignManagement from './pages/CampaignManagement';
 import CampaignCollectionStatus from './pages/CampaignCollectionStatus';
 import InfluencerAnalysis from './pages/InfluencerAnalysis';
 import InstagramReelReport from './pages/reports/InstagramReelReport';
+import InstagramPostReport from './pages/reports/InstagramPostReport';
 import BlogReport from './pages/reports/BlogReport';
 
 // Components
@@ -29,15 +30,23 @@ const ContentArea = styled.div`
 `;
 
 function App() {
-  const isAdminRoute = window.location.hash.startsWith('#/admin') || window.location.pathname.startsWith('/admin');
+  const currentHash = window.location.hash;
+  const currentPath = window.location.pathname;
+  
+  const isAdminRoute = currentHash.startsWith('#/admin') || currentPath.startsWith('/admin');
+  const isSharedReportRoute = 
+    currentHash.startsWith('#/shared') || currentPath.startsWith('/shared') ||
+    currentHash.startsWith('#/reports/') || currentPath.startsWith('/reports/') ||
+    currentHash.startsWith('#/report/') || currentPath.startsWith('/report/');
+  const isSharedRoute = isSharedReportRoute;
 
   return (
     <AppContainer>
       <Router>
-        {isAdminRoute && <Header />}
+        {isAdminRoute && !isSharedRoute && <Header />}
         <MainContent>
-          {isAdminRoute && <Navigation />}
-          <ContentArea>
+          {isAdminRoute && !isSharedRoute && <Navigation />}
+          <ContentArea style={{ padding: isSharedRoute ? '0' : '20px' }}>
             <Routes>
               {/* Admin Routes */}
               <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
@@ -52,13 +61,20 @@ function App() {
               
               {/* Public Report Routes */}
               <Route path="/report/instagram-reel" element={<InstagramReelReport />} />
+              <Route path="/report/instagram-post" element={<InstagramPostReport />} />
               <Route path="/report/blog" element={<BlogReport />} />
               
               {/* Shared Report Routes with Campaign Parameter */}
               <Route path="/reports/instagram/reels/:campaignName" element={<InstagramReelReport />} />
+              <Route path="/reports/instagram/posts/:campaignName" element={<InstagramPostReport />} />
               <Route path="/reports/blogs/:campaignName" element={<BlogReport />} />
               
-              {/* Default Route */}
+              {/* Shared Report Routes (without navigation) */}
+              <Route path="/shared/reports/instagram/reels/:campaignName" element={<InstagramReelReport />} />
+              <Route path="/shared/reports/instagram/posts/:campaignName" element={<InstagramPostReport />} />
+              <Route path="/shared/reports/blogs/:campaignName" element={<BlogReport />} />
+              
+              {/* Default Route - only redirect to admin if not a shared report route */}
               <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
             </Routes>
           </ContentArea>
