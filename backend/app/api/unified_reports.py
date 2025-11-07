@@ -107,16 +107,23 @@ async def get_unified_instagram_report(
 ):
     """캠페인 릴스 수집 작업 기반 인스타그램 보고서"""
     try:
-        print(f"🔍 캠페인 '{campaign_name}' 조회 시작")
+        # URL 디코딩 (FastAPI가 자동으로 하지만 명시적으로 처리)
+        from urllib.parse import unquote
+        decoded_campaign_name = unquote(campaign_name)
+        print(f"🔍 캠페인 '{decoded_campaign_name}' 조회 시작 (원본: {campaign_name})")
         
         # 캠페인 기본 정보 조회
         campaign = db.query(models.Campaign).filter(
-            models.Campaign.name == campaign_name,
+            models.Campaign.name == decoded_campaign_name,
             models.Campaign.campaign_type.in_(['instagram_post', 'instagram_reel', 'all'])
         ).first()
         
         if not campaign:
-            raise HTTPException(status_code=404, detail="Campaign not found")
+            # 디버깅을 위해 사용 가능한 캠페인 출력
+            available_campaigns = db.query(models.Campaign.name).all()
+            print(f"❌ 캠페인 '{decoded_campaign_name}'을 찾을 수 없습니다.")
+            print(f"📋 사용 가능한 캠페인: {[c.name for c in available_campaigns]}")
+            raise HTTPException(status_code=404, detail=f"Campaign '{decoded_campaign_name}' not found")
         
         # campaign_reel_collection_jobs에서 완료된 작업 조회
         collection_jobs = db.query(models.CampaignReelCollectionJob).filter(
@@ -139,8 +146,13 @@ async def get_unified_instagram_report(
         username_avg_views = {}  # 사용자별 평균 조회수 캐시
         
         for reel_url, jobs in reel_data_by_url.items():
-            # 최신 작업 선택
-            latest_job = max(jobs, key=lambda j: j.completed_at if j.completed_at else datetime.min)
+            # 최신 작업 선택 (completed_at이 None인 경우 처리)
+            valid_jobs = [j for j in jobs if j.completed_at is not None]
+            if not valid_jobs:
+                print(f"⚠️ 릴스 {reel_url}: 완료 시간이 없는 작업들, 첫 번째 작업 사용")
+                latest_job = jobs[0]
+            else:
+                latest_job = max(valid_jobs, key=lambda j: j.completed_at)
             
             username = latest_job.user_posted
             
@@ -171,8 +183,10 @@ async def get_unified_instagram_report(
             
             # 일자별 조회수 데이터 구성
             view_history = []
-            for job in sorted(jobs, key=lambda j: j.completed_at if j.completed_at else datetime.min):
-                if job.completed_at and job.video_play_count is not None:
+            # completed_at이 있는 작업만 정렬
+            jobs_with_date = [j for j in jobs if j.completed_at is not None]
+            for job in sorted(jobs_with_date, key=lambda j: j.completed_at):
+                if job.video_play_count is not None:
                     view_history.append({
                         'date': job.completed_at.strftime('%Y-%m-%d %H:%M:%S'),
                         'views': job.video_play_count
@@ -200,6 +214,11 @@ async def get_unified_instagram_report(
                     subscription_motivation = influencer_reel.subscription_motivation
                     category = influencer_reel.category
             
+            # 안전하게 job_metadata 접근
+            posted_at = None
+            if latest_job.job_metadata and isinstance(latest_job.job_metadata, dict):
+                posted_at = latest_job.job_metadata.get('date_posted')
+            
             reel_data = {
                 'id': latest_job.id,
                 'reel_id': reel_id or f"job_{latest_job.id}",
@@ -214,7 +233,7 @@ async def get_unified_instagram_report(
                 'grade': username_grades.get(username) if username else None,
                 'grade_avg_views': username_avg_views.get(username) if username else None,
                 'product': campaign.product,
-                'posted_at': latest_job.job_metadata.get('date_posted') if latest_job.job_metadata else None,
+                'posted_at': posted_at,
                 'collection_date': latest_job.completed_at,
                 'campaign_url': reel_url,
                 'data_source': 'campaign_collection',
@@ -272,11 +291,16 @@ async def get_unified_instagram_report(
             'chart_data_by_reel': chart_data_by_reel
         }
         
+    except HTTPException:
+        # HTTPException은 그대로 재발생
+        raise
     except Exception as e:
         print(f"❌ 통합 보고서 조회 실패: {str(e)}")
+        print(f"❌ 에러 타입: {type(e).__name__}")
         import traceback
+        print("❌ 전체 스택 트레이스:")
         traceback.print_exc()
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {type(e).__name__}: {str(e)}")
 
 @router.get("/test-view")
 async def test_unified_view(db: Session = Depends(get_db)):
