@@ -110,20 +110,85 @@ async def get_unified_instagram_report(
         # URL 디코딩 (FastAPI가 자동으로 하지만 명시적으로 처리)
         from urllib.parse import unquote
         decoded_campaign_name = unquote(campaign_name)
-        print(f"🔍 캠페인 '{decoded_campaign_name}' 조회 시작 (원본: {campaign_name})")
+        print(f"🔍 캠페인 조회 시작")
+        print(f"   원본 (인코딩됨): {campaign_name}")
+        print(f"   디코딩됨: {decoded_campaign_name}")
+        print(f"   타입: {type(decoded_campaign_name)}")
         
-        # 캠페인 기본 정보 조회
+        # 모든 캠페인 조회 (디버깅용)
+        all_campaigns = db.query(models.Campaign).all()
+        print(f"📋 데이터베이스의 모든 캠페인 ({len(all_campaigns)}개):")
+        for c in all_campaigns:
+            print(f"   - ID: {c.id}, 이름: '{c.name}' (타입: {type(c.name)}), 캠페인 타입: {c.campaign_type}")
+            print(f"     이름 비교: '{c.name}' == '{decoded_campaign_name}' ? {c.name == decoded_campaign_name}")
+            print(f"     이름 길이: {len(c.name)} vs {len(decoded_campaign_name)}")
+            if c.name != decoded_campaign_name:
+                print(f"     바이트 비교: {c.name.encode('utf-8')} vs {decoded_campaign_name.encode('utf-8')}")
+        
+        # 캠페인 이름 정규화 (공백, 탭, 줄바꿈 제거)
+        normalized_request_name = decoded_campaign_name.strip().replace('\t', '').replace('\n', '').replace('\r', '')
+        print(f"   정규화된 요청 이름: '{normalized_request_name}' (길이: {len(normalized_request_name)})")
+        
+        # 캠페인 기본 정보 조회 (정확한 매칭)
         campaign = db.query(models.Campaign).filter(
-            models.Campaign.name == decoded_campaign_name,
-            models.Campaign.campaign_type.in_(['instagram_post', 'instagram_reel', 'all'])
+            models.Campaign.name == decoded_campaign_name
         ).first()
         
+        # 정확한 매칭이 실패하면 정규화된 이름으로 매칭 시도
         if not campaign:
-            # 디버깅을 위해 사용 가능한 캠페인 출력
-            available_campaigns = db.query(models.Campaign.name).all()
-            print(f"❌ 캠페인 '{decoded_campaign_name}'을 찾을 수 없습니다.")
-            print(f"📋 사용 가능한 캠페인: {[c.name for c in available_campaigns]}")
-            raise HTTPException(status_code=404, detail=f"Campaign '{decoded_campaign_name}' not found")
+            print(f"⚠️ 정확한 매칭 실패, 정규화된 이름으로 매칭 시도...")
+            # 모든 캠페인을 가져와서 Python에서 정규화 후 비교
+            all_campaigns = db.query(models.Campaign).all()
+            for c in all_campaigns:
+                normalized_db_name = c.name.strip().replace('\t', '').replace('\n', '').replace('\r', '')
+                if normalized_db_name == normalized_request_name:
+                    campaign = c
+                    print(f"   ✅ 정규화 후 매칭 성공!")
+                    print(f"      DB 이름 (원본): '{c.name}' (길이: {len(c.name)})")
+                    print(f"      DB 이름 (정규화): '{normalized_db_name}' (길이: {len(normalized_db_name)})")
+                    print(f"      요청 이름 (정규화): '{normalized_request_name}' (길이: {len(normalized_request_name)})")
+                    break
+        
+        # 여전히 없으면 대소문자 무시 매칭 시도
+        if not campaign:
+            print(f"⚠️ 정규화 매칭도 실패, 대소문자 무시 매칭 시도...")
+            all_campaigns = db.query(models.Campaign).all()
+            for c in all_campaigns:
+                normalized_db_name = c.name.strip().replace('\t', '').replace('\n', '').replace('\r', '').lower()
+                normalized_request_lower = normalized_request_name.lower()
+                if normalized_db_name == normalized_request_lower:
+                    campaign = c
+                    print(f"   ✅ 대소문자 무시 매칭 성공: '{c.name}'")
+                    break
+        
+        if not campaign:
+            # 인스타그램 관련 캠페인만 필터링
+            instagram_campaigns = db.query(models.Campaign).filter(
+                models.Campaign.campaign_type.in_(['instagram_post', 'instagram_reel', 'all'])
+            ).all()
+            print(f"❌ 캠페인 '{decoded_campaign_name}' (정규화: '{normalized_request_name}')을 찾을 수 없습니다.")
+            print(f"📋 인스타그램 관련 캠페인 ({len(instagram_campaigns)}개):")
+            for c in instagram_campaigns:
+                normalized_c_name = c.name.strip().replace('\t', '').replace('\n', '').replace('\r', '')
+                print(f"   - 원본: '{c.name}' (길이: {len(c.name)})")
+                print(f"     정규화: '{normalized_c_name}' (길이: {len(normalized_c_name)})")
+                print(f"     타입: {c.campaign_type}")
+            # 정규화된 이름 목록도 포함
+            normalized_campaign_names = [c.name.strip().replace('\t', '').replace('\n', '').replace('\r', '') for c in instagram_campaigns]
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Campaign '{normalized_request_name}' not found. Available campaigns (normalized): {normalized_campaign_names}"
+            )
+        
+        # 캠페인 타입 확인
+        if campaign.campaign_type not in ['instagram_post', 'instagram_reel', 'all']:
+            print(f"⚠️ 캠페인 타입 '{campaign.campaign_type}'는 인스타그램 관련이 아닙니다.")
+            raise HTTPException(
+                status_code=400,
+                detail=f"Campaign '{decoded_campaign_name}' is not an Instagram campaign (type: {campaign.campaign_type})"
+            )
+        
+        print(f"✅ 캠페인 찾음: ID={campaign.id}, 이름='{campaign.name}', 타입={campaign.campaign_type}")
         
         # campaign_reel_collection_jobs에서 완료된 작업 조회
         collection_jobs = db.query(models.CampaignReelCollectionJob).filter(
