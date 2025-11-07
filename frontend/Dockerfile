@@ -14,14 +14,8 @@ RUN npm ci --no-audit --prefer-offline && \
 # 소스 코드 복사
 COPY . .
 
-# 프로덕션 빌드 생성
-RUN npm run build
+# 빌드 디렉토리 생성 (볼륨 마운트를 위해)
+RUN mkdir -p /app/build
 
-# serve를 전역으로 설치하여 정적 파일 서빙
-RUN npm install -g serve
-
-# 포트 3000 노출
-EXPOSE 3000
-
-# 프로덕션 빌드 서빙 (Host header 제한 없음)
-CMD ["serve", "-s", "build", "-l", "3000"]
+# 기본 명령어 (docker-compose에서 오버라이드됨)
+CMD ["npm", "run", "build"]

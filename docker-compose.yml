@@ -40,7 +40,7 @@ services:
     networks:
       - goodwave-network
 
-  # React 프론트엔드
+  # React 프론트엔드 (빌드용)
   frontend:
     build:
       context: ./frontend
@@ -49,32 +49,32 @@ services:
     environment:
       - REACT_APP_API_BASE_URL=/api
       - REACT_APP_BACKEND_URL=http://goodwave_backend:8000
-      - HOST=0.0.0.0
-    ports:
-      - "3000:3000"
     volumes:
-      - ./frontend/src:/app/src
-      - ./frontend/public:/app/public
+      - frontend_build:/app/build
+    command: sh -c "npm run build && tail -f /dev/null"
     depends_on:
       - backend
-    restart: unless-stopped
     networks:
       - goodwave-network
 
-  # Nginx 리버스 프록시
+  # Nginx 리버스 프록시 (프론트엔드 정적 파일 서빙)
   nginx:
     image: nginx:alpine
     container_name: goodwave_nginx
     ports:
       - "80:80"
     volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - frontend_build:/usr/share/nginx/html:ro
     depends_on:
       - backend
       - frontend
     restart: unless-stopped
     networks:
       - goodwave-network
+
+volumes:
+  frontend_build:
 
 networks:
   goodwave-network:

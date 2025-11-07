@@ -204,20 +204,10 @@ for i in {1..15}; do
     sleep 2
 done
 
-# 프론트엔드 헬스체크
-for i in {1..15}; do
-    if curl -s http://localhost:3000 &>/dev/null; then
-        log_success "✅ 프론트엔드 서비스 준비 완료"
-        break
-    fi
-    echo -n "."
-    sleep 2
-done
-
-# Nginx 헬스체크
+# Nginx 헬스체크 (프론트엔드 포함)
 for i in {1..15}; do
     if curl -s http://localhost:80 &>/dev/null; then
-        log_success "✅ Nginx 리버스 프록시 준비 완료"
+        log_success "✅ Nginx 웹 서버 준비 완료"
         break
     fi
     echo -n "."
@@ -246,8 +236,8 @@ docker-compose ps
 
 echo ""
 echo "🌐 서비스 접속 정보:"
-echo "  - Nginx (리버스 프록시): http://localhost:80"
-echo "  - 프론트엔드 (직접): http://localhost:3000"
+echo "  - 웹 애플리케이션: http://localhost (또는 서버 IP)"
+echo "  - 관리자 페이지: http://localhost/admin"
 echo "  - 백엔드 API (직접): http://localhost:8000"
 echo "  - API 문서: http://localhost:8000/docs"
 echo "  - 백엔드 헬스체크: http://localhost:8000/health"
@@ -266,9 +256,10 @@ echo ""
 echo "⚠️  중요 사항:"
 echo "   1. .env 파일의 모든 API 키와 AWS RDS 연결 정보가 올바르게 설정되었는지 확인하세요"
 echo "   2. AWS RDS 보안 그룹에서 배포 서버의 IP가 허용되었는지 확인하세요"
-echo "   3. 방화벽에서 포트 80 (Nginx), 3000 (프론트엔드), 8000 (백엔드)이 열려있는지 확인하세요"
+echo "   3. 방화벽에서 포트 80 (HTTP), 8000 (백엔드 API)이 열려있는지 확인하세요"
 echo "   4. 프로덕션 환경에서는 Nginx에 HTTPS(SSL/TLS) 설정을 권장합니다"
 echo "   5. AWS RDS 자동 백업이 활성화되어 있는지 확인하세요"
+echo "   6. 브라우저에서 http://서버IP/admin 으로 접속하세요"
 echo ""
 echo "📚 추가 도움말:"
 echo "   - 서비스 중지: docker-compose down"
