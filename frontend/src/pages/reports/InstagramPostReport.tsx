@@ -416,7 +416,9 @@ const InstagramPostReport: React.FC = () => {
   const handleShare = () => {
     if (!selectedCampaign) return;
     
-    const shareUrl = `${window.location.origin}/#/reports/instagram/posts/${encodeURIComponent(selectedCampaign)}`;
+    // 캠페인 이름 정규화 (탭, 줄바꿈, 공백 제거)
+    const normalizedCampaignName = selectedCampaign.trim().replace(/\t/g, '').replace(/\n/g, '').replace(/\r/g, '');
+    const shareUrl = `${window.location.origin}/#/reports/instagram/posts/${encodeURIComponent(normalizedCampaignName)}`;
     
     // 클립보드 API 사용 가능 여부 확인
     if (navigator.clipboard && navigator.clipboard.writeText) {

@@ -45,6 +45,10 @@ class BrightDataService:
         self.snapshot_dir = Path(__file__).parent.parent.parent / "data_snapshots"
         self.snapshot_dir.mkdir(exist_ok=True)
         
+        # 스냅샷 파일 보관 설정 (환경 변수로 설정 가능, 기본값: 7일)
+        self.snapshot_retention_days = int(os.getenv("SNAPSHOT_RETENTION_DAYS", "7"))
+        self.snapshot_max_files = int(os.getenv("SNAPSHOT_MAX_FILES", "200"))  # 최대 파일 개수
+        
     async def collect_instagram_data_batch(self, urls: List[str], options: Dict[str, bool] = None, session_id: str = None) -> List[Dict[str, Any]]:
         """배치로 인스타그램 데이터를 수집합니다."""
         logger.info(f"🚀 BrightData 배치 수집 시작: {len(urls)}개 URL")
@@ -1523,6 +1527,77 @@ class BrightDataService:
             logger.error(f"릴스 데이터 추출 오류: {str(e)}")
             return []
     
+    def _cleanup_old_snapshots(self):
+        """오래된 스냅샷 파일 정리"""
+        try:
+            if not self.snapshot_dir.exists():
+                return
+            
+            current_time = now_kst()
+            cutoff_time = current_time - timedelta(days=self.snapshot_retention_days)
+            
+            # 모든 파일 가져오기
+            all_files = list(self.snapshot_dir.glob("*"))
+            files_with_time = []
+            
+            for file_path in all_files:
+                if file_path.is_file():
+                    # 파일명에서 타임스탬프 추출 시도 (YYYYMMDD_HHMMSS 형식)
+                    try:
+                        # 파일명 형식: username_datatype_YYYYMMDD_HHMMSS.ext
+                        parts = file_path.stem.split('_')
+                        if len(parts) >= 3:
+                            date_str = parts[-2]  # YYYYMMDD
+                            time_str = parts[-1]  # HHMMSS
+                            file_timestamp = datetime.strptime(f"{date_str}_{time_str}", "%Y%m%d_%H%M%S")
+                            files_with_time.append((file_path, file_timestamp))
+                        else:
+                            # 타임스탬프를 추출할 수 없으면 수정 시간 사용
+                            file_timestamp = datetime.fromtimestamp(file_path.stat().st_mtime)
+                            files_with_time.append((file_path, file_timestamp))
+                    except (ValueError, IndexError):
+                        # 파싱 실패 시 파일 수정 시간 사용
+                        file_timestamp = datetime.fromtimestamp(file_path.stat().st_mtime)
+                        files_with_time.append((file_path, file_timestamp))
+            
+            # 오래된 파일 삭제
+            deleted_count = 0
+            deleted_size = 0
+            for file_path, file_timestamp in files_with_time:
+                if file_timestamp < cutoff_time:
+                    try:
+                        file_size = file_path.stat().st_size
+                        file_path.unlink()
+                        deleted_count += 1
+                        deleted_size += file_size
+                    except Exception as e:
+                        logger.warning(f"⚠️ 파일 삭제 실패: {file_path} - {str(e)}")
+            
+            if deleted_count > 0:
+                logger.info(f"🧹 오래된 스냅샷 파일 {deleted_count}개 삭제 완료 (총 {deleted_size / 1024 / 1024:.2f} MB)")
+            
+            # 파일 개수 제한 (최신 파일만 유지)
+            remaining_files = [(fp, ft) for fp, ft in files_with_time if fp.exists()]
+            if len(remaining_files) > self.snapshot_max_files:
+                # 수정 시간 기준으로 정렬 (오래된 것부터)
+                remaining_files.sort(key=lambda x: x[1])
+                files_to_delete = remaining_files[:-self.snapshot_max_files]
+                
+                for file_path, _ in files_to_delete:
+                    try:
+                        file_size = file_path.stat().st_size
+                        file_path.unlink()
+                        deleted_count += 1
+                        deleted_size += file_size
+                    except Exception as e:
+                        logger.warning(f"⚠️ 파일 삭제 실패: {file_path} - {str(e)}")
+                
+                if files_to_delete:
+                    logger.info(f"🧹 파일 개수 제한으로 {len(files_to_delete)}개 파일 추가 삭제 (총 {deleted_size / 1024 / 1024:.2f} MB)")
+                    
+        except Exception as e:
+            logger.error(f"❌ 스냅샷 파일 정리 중 오류: {str(e)}")
+    
     def _save_snapshot_data(self, data: Any, username: str, data_type: str) -> tuple[str, str]:
         """스냅샷 데이터를 JSON과 CSV 파일로 저장"""
         timestamp = now_kst().strftime("%Y%m%d_%H%M%S")
@@ -1558,6 +1633,12 @@ class BrightDataService:
         except Exception as e:
             logger.error(f"❌ CSV 파일 저장 실패: {str(e)}")
             csv_path = None
+        
+        # 파일 저장 후 오래된 파일 정리 (주기적으로만 실행)
+        # 매번 실행하면 성능 저하가 있을 수 있으므로 확률적으로 실행
+        import random
+        if random.random() < 0.1:  # 10% 확률로 실행
+            self._cleanup_old_snapshots()
         
         return str(json_path) if json_path else None, str(csv_path) if csv_path else None
     

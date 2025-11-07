@@ -236,8 +236,10 @@ const AdminDashboard: React.FC = () => {
   };
 
   const handleShareReport = (campaignName: string, campaignType: string) => {
+    // 캠페인 이름 정규화 (탭, 줄바꿈, 공백 제거)
+    const normalizedCampaignName = campaignName.trim().replace(/\t/g, '').replace(/\n/g, '').replace(/\r/g, '');
     // 캠페인 이름을 URL에 적합한 형태로 변환
-    const encodedCampaignName = encodeURIComponent(campaignName);
+    const encodedCampaignName = encodeURIComponent(normalizedCampaignName);
     
     // 현재 호스트 정보 가져오기
     const baseUrl = window.location.origin;

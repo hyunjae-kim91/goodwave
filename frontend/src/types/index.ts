@@ -44,6 +44,7 @@ export interface CampaignUpdate {
   start_date?: string;
   end_date?: string;
   product?: string;
+  campaign_type?: string;
   urls?: CampaignURLUpdatePayload[];
 }
 

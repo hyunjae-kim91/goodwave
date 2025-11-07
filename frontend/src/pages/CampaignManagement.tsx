@@ -6,7 +6,8 @@ import { Campaign, CampaignCreate, CampaignUpdate, CampaignURLCreate, CampaignUR
 
 const CAMPAIGN_TYPE_OPTIONS = [
   { value: 'instagram_reel', label: '인스타그램 릴스' },
-  { value: 'blog', label: '네이버 블로그' }
+  { value: 'blog', label: '네이버 블로그' },
+  { value: 'all', label: '전체' }
 ] as const;
 
 const CAMPAIGN_TYPE_LABELS = CAMPAIGN_TYPE_OPTIONS.reduce<Record<string, string>>((acc, option) => {
@@ -23,13 +24,14 @@ type EditCampaignURL = {
   channel: string;
 };
 
-type EditFormField = 'budget' | 'product' | 'startDate' | 'endDate';
+type EditFormField = 'budget' | 'product' | 'startDate' | 'endDate' | 'campaignType';
 
 type EditFormState = {
   budget: string;
   product: string;
   startDate: string;
   endDate: string;
+  campaignType: string;
   urls: EditCampaignURL[];
 };
 
@@ -339,6 +341,7 @@ const CampaignManagement: React.FC = () => {
       product: campaign.product || '',
       startDate: toDateInputValue(campaign.start_date),
       endDate: toDateInputValue(campaign.end_date),
+      campaignType: campaign.campaign_type || 'instagram_reel',
       urls: (campaign.campaign_urls || []).map(url => ({
         id: url.id,
         url: url.url,
@@ -416,6 +419,7 @@ const CampaignManagement: React.FC = () => {
       product: trimmedProduct,
       start_date: `${editForm.startDate}T09:00:00`,
       end_date: `${editForm.endDate}T23:59:59`,
+      campaign_type: editForm.campaignType,
       urls: urlPayload.length > 0 ? urlPayload : undefined,
     };
 
@@ -643,6 +647,19 @@ const CampaignManagement: React.FC = () => {
                       value={editForm.product}
                       onChange={(e) => handleEditFormChange('product', e.target.value)}
                     />
+                  </FormGroup>
+                  <FormGroup>
+                    <Label>유형</Label>
+                    <Select
+                      value={editForm.campaignType}
+                      onChange={(e) => handleEditFormChange('campaignType', e.target.value)}
+                    >
+                      {CAMPAIGN_TYPE_OPTIONS.map(option => (
+                        <option key={option.value} value={option.value}>
+                          {option.label}
+                        </option>
+                      ))}
+                    </Select>
                   </FormGroup>
                   <FormGroup>
                     <Label>시작날짜</Label>
