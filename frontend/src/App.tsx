@@ -75,7 +75,7 @@ function App() {
               <Route path="/shared/reports/blogs/:campaignName" element={<BlogReport />} />
               
               {/* Default Route - only redirect to admin if not a shared report route */}
-              <Route path="/" element={<Navigate to="/admin/dashboard" replace />} />
+              <Route path="/" element={<Navigate to="/admin" replace />} />
             </Routes>
           </ContentArea>
         </MainContent>

@@ -6,6 +6,7 @@ from app.db.database import get_db
 from app.db import models
 from app.services.campaign_reel_collection_service import CampaignReelCollectionService
 from app.services.collection_worker import stop_collection_worker, get_worker_status
+from app.utils.sequence_fixer import fix_all_sequences, fix_table_sequence
 
 router = APIRouter()
 
@@ -453,3 +454,48 @@ async def emergency_stop_all_collections(db: Session = Depends(get_db)):
         print(f"Error in emergency stop: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/fix-sequences")
+async def fix_database_sequences(db: Session = Depends(get_db)):
+    """
+    모든 테이블의 시퀀스를 리셋합니다.
+    UniqueViolation (ID 중복) 에러가 발생할 때 사용하세요.
+    """
+    try:
+        results = fix_all_sequences(db)
+        
+        success_count = sum(1 for v in results.values() if v)
+        total_count = len(results)
+        
+        return {
+            "success": True,
+            "message": f"시퀀스 리셋 완료: {success_count}/{total_count} 테이블",
+            "results": results
+        }
+    except Exception as e:
+        print(f"Error fixing sequences: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"시퀀스 리셋 실패: {str(e)}")
+
+
+@router.post("/fix-sequence/{table_name}")
+async def fix_single_table_sequence(table_name: str, db: Session = Depends(get_db)):
+    """
+    특정 테이블의 시퀀스만 리셋합니다.
+    """
+    try:
+        success = fix_table_sequence(db, table_name)
+        
+        if success:
+            return {
+                "success": True,
+                "message": f"'{table_name}' 테이블 시퀀스 리셋 완료"
+            }
+        else:
+            return {
+                "success": False,
+                "message": f"'{table_name}' 테이블 시퀀스 리셋 실패"
+            }
+    except Exception as e:
+        print(f"Error fixing sequence for {table_name}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"시퀀스 리셋 실패: {str(e)}")

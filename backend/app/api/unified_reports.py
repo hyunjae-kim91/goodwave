@@ -5,24 +5,109 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from collections import defaultdict
 from datetime import datetime
 
 from app.db.database import get_db
 from app.db.unified_models import CampaignInstagramUnifiedView
 from app.db import models
+from app.services.grade_service import instagram_grade_service
 
 router = APIRouter()
+
+
+def _calculate_influencer_grade(db: Session, username: str) -> Optional[str]:
+    """
+    사용자의 등급을 계산합니다.
+    24개 릴스의 평균 조회수 (최상 2개 + 최하위 2개 제외한 나머지 20개의 평균)로 계산
+    """
+    result = _calculate_influencer_grade_with_avg(db, username)
+    return result['grade'] if result else None
+
+
+def _calculate_influencer_grade_with_avg(db: Session, username: str) -> Optional[Dict[str, Any]]:
+    """
+    사용자의 등급과 평균 조회수를 계산합니다.
+    24개 릴스의 평균 조회수 (최상 2개 + 최하위 2개 제외한 나머지 20개의 평균)로 계산
+    """
+    # 인플루언서 프로필 조회
+    profile = db.query(models.InfluencerProfile).filter(
+        models.InfluencerProfile.username == username
+    ).first()
+    
+    if not profile:
+        return None
+    
+    # 최대 24개 릴스의 조회수 조회
+    reels = db.query(models.InfluencerReel).filter(
+        models.InfluencerReel.profile_id == profile.id,
+        models.InfluencerReel.video_play_count.isnot(None)
+    ).order_by(models.InfluencerReel.created_at.desc()).limit(24).all()
+    
+    if not reels:
+        return None
+    
+    # 조회수 추출
+    view_counts = [reel.video_play_count for reel in reels if reel.video_play_count is not None and reel.video_play_count > 0]
+    
+    if len(view_counts) == 0:
+        return None
+    
+    # 최상위 2개, 최하위 2개 제외 (20개 이상일 때만)
+    if len(view_counts) > 4:
+        view_counts_sorted = sorted(view_counts)
+        trimmed_counts = view_counts_sorted[2:-2]  # 최하위 2개, 최상위 2개 제외
+    else:
+        trimmed_counts = view_counts
+    
+    if not trimmed_counts:
+        return None
+    
+    # 평균 계산
+    average_views = sum(trimmed_counts) / len(trimmed_counts)
+    
+    # instagram_grade_thresholds 테이블 기준으로 등급 반환
+    grade = instagram_grade_service.get_grade_for_average(db, average_views)
+    
+    return {
+        'grade': grade,
+        'avg_views': average_views,
+        'total_reels': len(view_counts),
+        'trimmed_reels': len(trimmed_counts)
+    }
+
+
+def _get_latest_reel_view_count(db: Session, reel_id: str, username: str) -> int:
+    """
+    특정 릴스의 최신 조회수를 반환합니다.
+    """
+    # 인플루언서 프로필 조회
+    profile = db.query(models.InfluencerProfile).filter(
+        models.InfluencerProfile.username == username
+    ).first()
+    
+    if not profile:
+        return 0
+    
+    reel = db.query(models.InfluencerReel).filter(
+        models.InfluencerReel.reel_id == reel_id,
+        models.InfluencerReel.profile_id == profile.id
+    ).order_by(models.InfluencerReel.created_at.desc()).first()
+    
+    if not reel:
+        return 0
+    
+    return reel.video_play_count or reel.views or 0
 
 @router.get("/instagram/unified/{campaign_name}")
 async def get_unified_instagram_report(
     campaign_name: str,
     db: Session = Depends(get_db)
 ):
-    """통합 뷰를 사용한 인스타그램 캠페인 보고서"""
+    """캠페인 릴스 수집 작업 기반 인스타그램 보고서"""
     try:
-        print(f"🔍 통합 뷰에서 캠페인 '{campaign_name}' 조회 시작")
+        print(f"🔍 캠페인 '{campaign_name}' 조회 시작")
         
         # 캠페인 기본 정보 조회
         campaign = db.query(models.Campaign).filter(
@@ -33,72 +118,140 @@ async def get_unified_instagram_report(
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
         
-        # 통합 뷰에서 캠페인 데이터 조회
-        unified_data = db.query(CampaignInstagramUnifiedView).filter(
-            CampaignInstagramUnifiedView.campaign_id == campaign.id
-        ).order_by(CampaignInstagramUnifiedView.collection_date.desc()).all()
+        # campaign_reel_collection_jobs에서 완료된 작업 조회
+        collection_jobs = db.query(models.CampaignReelCollectionJob).filter(
+            models.CampaignReelCollectionJob.campaign_id == campaign.id,
+            models.CampaignReelCollectionJob.status == 'completed'
+        ).order_by(models.CampaignReelCollectionJob.completed_at.desc()).all()
         
-        print(f"📊 통합 뷰에서 {len(unified_data)}개 레코드 조회됨")
+        print(f"📊 총 {len(collection_jobs)}개 수집 작업 완료됨")
         
-        # 데이터 소스별 분류
-        campaign_data = []
-        influencer_data = []
+        # 릴스 URL별로 그룹화 (같은 URL의 일자별 데이터)
+        reel_data_by_url = defaultdict(list)
+        for job in collection_jobs:
+            reel_data_by_url[job.reel_url].append(job)
         
-        for record in unified_data:
-            record_dict = record.to_dict()
-            if record.data_source == 'campaign':
-                campaign_data.append(record_dict)
-            else:
-                influencer_data.append(record_dict)
+        print(f"🎬 고유 릴스 URL: {len(reel_data_by_url)}개")
         
-        print(f"📈 데이터 분류: 캠페인 {len(campaign_data)}개, 인플루언서 {len(influencer_data)}개")
+        # 각 릴스 URL별로 데이터 구성
+        reels_list = []
+        username_grades = {}  # 사용자별 등급 캐시
+        username_avg_views = {}  # 사용자별 평균 조회수 캐시
         
-        # 통합 데이터 (인플루언서 우선)
-        all_data = influencer_data + campaign_data
+        for reel_url, jobs in reel_data_by_url.items():
+            # 최신 작업 선택
+            latest_job = max(jobs, key=lambda j: j.completed_at if j.completed_at else datetime.min)
+            
+            username = latest_job.user_posted
+            
+            # 인플루언서 프로필 조회
+            profile = None
+            display_name = username
+            follower_count = 0
+            
+            if username:
+                profile = db.query(models.InfluencerProfile).filter(
+                    models.InfluencerProfile.username == username
+                ).first()
+                
+                if profile:
+                    display_name = profile.full_name or username
+                    follower_count = profile.followers or 0
+            
+            # 사용자 등급 및 평균 조회수 계산 (캐시 사용)
+            if username and username not in username_grades:
+                grade_result = _calculate_influencer_grade_with_avg(db, username)
+                if grade_result:
+                    username_grades[username] = grade_result['grade']
+                    username_avg_views[username] = grade_result['avg_views']
+                    print(f"🏆 '{username}' 등급: {grade_result['grade']}, 평균 조회수: {grade_result['avg_views']:,.0f}, 팔로워: {follower_count:,}")
+                else:
+                    username_grades[username] = None
+                    username_avg_views[username] = None
+            
+            # 일자별 조회수 데이터 구성
+            view_history = []
+            for job in sorted(jobs, key=lambda j: j.completed_at if j.completed_at else datetime.min):
+                if job.completed_at and job.video_play_count is not None:
+                    view_history.append({
+                        'date': job.completed_at.strftime('%Y-%m-%d %H:%M:%S'),
+                        'views': job.video_play_count
+                    })
+            
+            # 인플루언서 데이터에서 추가 정보 가져오기
+            subscription_motivation = None
+            category = None
+            
+            # reel_url에서 reel_id 추출
+            reel_id = None
+            if '/reel/' in reel_url:
+                parts = reel_url.split('/reel/')
+                if len(parts) > 1:
+                    reel_id = parts[1].split('/')[0].split('?')[0]
+            
+            # 인플루언서 릴스 데이터에서 분류 정보 가져오기
+            if reel_id and profile:
+                influencer_reel = db.query(models.InfluencerReel).filter(
+                    models.InfluencerReel.reel_id == reel_id,
+                    models.InfluencerReel.profile_id == profile.id
+                ).first()
+                
+                if influencer_reel:
+                    subscription_motivation = influencer_reel.subscription_motivation
+                    category = influencer_reel.category
+            
+            reel_data = {
+                'id': latest_job.id,
+                'reel_id': reel_id or f"job_{latest_job.id}",
+                'reel_url': reel_url,
+                'username': username,
+                'display_name': display_name,
+                'follower_count': follower_count,
+                's3_thumbnail_url': latest_job.s3_thumbnail_url,
+                'video_view_count': latest_job.video_play_count or 0,
+                'subscription_motivation': subscription_motivation,
+                'category': category,
+                'grade': username_grades.get(username) if username else None,
+                'grade_avg_views': username_avg_views.get(username) if username else None,
+                'product': campaign.product,
+                'posted_at': latest_job.job_metadata.get('date_posted') if latest_job.job_metadata else None,
+                'collection_date': latest_job.completed_at,
+                'campaign_url': reel_url,
+                'data_source': 'campaign_collection',
+                'view_history': view_history  # 일자별 조회수 이력
+            }
+            
+            reels_list.append(reel_data)
+            print(f"📝 릴스 추가: {reel_url} (조회수: {latest_job.video_play_count}, 등급: {reel_data['grade']})")
         
-        # 중복 제거 (같은 username의 경우 인플루언서 데이터 우선)
-        seen_usernames = set()
-        unique_data = []
+        print(f"🔄 최종 릴스 개수: {len(reels_list)}개")
         
-        for record in all_data:
-            username = record['username']
-            if username not in seen_usernames:
-                unique_data.append(record)
-                seen_usernames.add(username)
-        
-        print(f"🔄 중복 제거 후: {len(unique_data)}개")
-        
-        # 날짜별 조회수 집계
-        view_data = defaultdict(int)
-        for record in unique_data:
-            collection_date = record.get('collection_date')
-            if collection_date:
-                try:
-                    if isinstance(collection_date, str):
-                        date_obj = datetime.fromisoformat(collection_date.replace('Z', '+00:00'))
-                    else:
-                        date_obj = collection_date
-                    date_key = date_obj.strftime('%Y-%m-%d')
-                    view_data[date_key] += record.get('video_view_count', 0)
-                except (ValueError, AttributeError):
-                    continue
-        
-        # 차트 데이터 생성
-        sorted_dates = sorted(view_data.keys())
-        chart_data = {
-            'labels': sorted_dates,
-            'data': [view_data[date] for date in sorted_dates]
-        }
+        # 릴스별 일자별 조회수 차트 데이터 생성
+        chart_data_by_reel = {}
+        for reel in reels_list:
+            if reel['view_history']:
+                dates = [v['date'] for v in reel['view_history']]
+                views = [v['views'] for v in reel['view_history']]
+                chart_data_by_reel[reel['reel_url']] = {
+                    'labels': dates,
+                    'data': views
+                }
         
         # 통계 계산
-        total_views = sum(record.get('video_view_count', 0) for record in unique_data)
-        avg_views = total_views / len(unique_data) if unique_data else 0
+        total_views = sum(reel.get('video_view_count', 0) for reel in reels_list)
+        avg_views = total_views / len(reels_list) if reels_list else 0
         
         # 등급별 분포
         grade_distribution = defaultdict(int)
-        for record in unique_data:
-            grade = record.get('grade', 'Unknown')
+        for reel in reels_list:
+            grade = reel.get('grade', 'Unknown')
             grade_distribution[grade] += 1
+        
+        # 고유 사용자 수 계산
+        unique_usernames = set(reel.get('username') for reel in reels_list if reel.get('username'))
+        
+        print(f"📊 최종 통계: 총 {len(reels_list)}개 릴스, {len(unique_usernames)}명 인플루언서")
+        print(f"🎯 등급 분포: {dict(grade_distribution)}")
         
         return {
             'campaign': {
@@ -109,21 +262,14 @@ async def get_unified_instagram_report(
                 'budget': campaign.budget
             },
             'summary': {
-                'total_reels': len(unique_data),
-                'campaign_source_count': len(campaign_data),
-                'influencer_source_count': len(influencer_data),
-                'unique_influencers': len(seen_usernames),
+                'total_reels': len(reels_list),
+                'unique_influencers': len(unique_usernames),
                 'total_views': total_views,
                 'average_views': round(avg_views, 2),
                 'grade_distribution': dict(grade_distribution)
             },
-            'reels': unique_data,
-            'chart_data': chart_data,
-            'data_sources': {
-                'campaign': len(campaign_data),
-                'influencer': len(influencer_data),
-                'total_unique': len(unique_data)
-            }
+            'reels': reels_list,
+            'chart_data_by_reel': chart_data_by_reel
         }
         
     except Exception as e:

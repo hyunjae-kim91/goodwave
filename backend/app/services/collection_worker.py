@@ -123,7 +123,7 @@ class CollectionWorker:
             session.close()
     
     async def process_pending_jobs(self):
-        """대기 중인 작업들을 순차 처리 (계정별 동시 작업 방지)"""
+        """대기 중인 작업들을 2단계로 순차 처리: 1) 모든 프로필 먼저, 2) 그 다음 릴스"""
         db = self.Session()
         try:
             # 현재 처리 중인 작업이 있는지 확인
@@ -135,22 +135,217 @@ class CollectionWorker:
                 logger.info(f"⏳ 처리 중인 작업 {processing_jobs}개가 있어서 대기 중...")
                 return
             
-            # 우선순위 순으로 대기 중인 작업 조회 (처리 중인 작업이 없을 때만)
-            pending_job = db.query(CollectionJob).filter(
-                CollectionJob.status == "pending"
+            # 1단계: 프로필 수집이 필요한 작업 우선 처리
+            profile_pending_job = db.query(CollectionJob).filter(
+                CollectionJob.status == "pending",
+                CollectionJob.collect_profile == True,
+                CollectionJob.profile_status == "pending"
             ).order_by(
                 CollectionJob.priority.desc(),
                 CollectionJob.created_at.asc()
             ).first()
             
-            if not pending_job:
+            if profile_pending_job:
+                logger.info(f"📋 [1단계: 프로필] 처리할 작업 발견: {profile_pending_job.username}")
+                await self.process_profile_only(profile_pending_job.job_id)
                 return
             
-            logger.info(f"📋 처리할 작업 발견: {pending_job.username}")
+            # 2단계: 모든 프로필 수집이 완료되면 릴스 수집 시작
+            reels_pending_job = db.query(CollectionJob).filter(
+                CollectionJob.status == "pending",
+                CollectionJob.collect_reels == True,
+                CollectionJob.reels_status == "pending"
+            ).order_by(
+                CollectionJob.priority.desc(),
+                CollectionJob.created_at.asc()
+            ).first()
             
-            # 단일 작업 순차 처리
-            await self.process_single_job(pending_job.job_id)
+            if reels_pending_job:
+                logger.info(f"📋 [2단계: 릴스] 처리할 작업 발견: {reels_pending_job.username}")
+                await self.process_reels_only(reels_pending_job.job_id)
+                return
             
+            # 모든 작업 완료
+            logger.debug("✅ 모든 대기 작업이 완료되었습니다")
+            
+        finally:
+            db.close()
+    
+    async def process_profile_only(self, job_id: str):
+        """프로필만 수집 (1단계)"""
+        db = self.Session()
+        try:
+            job = db.query(CollectionJob).filter(CollectionJob.job_id == job_id).first()
+            if not job or job.profile_status != "pending":
+                return
+            
+            # 작업 상태를 processing으로 변경
+            job.status = "processing"
+            job.profile_status = "processing"
+            job.started_at = now_kst()
+            db.commit()
+            
+            logger.info(f"🔄 [프로필 수집 시작] {job.username} ({job.url})")
+            
+            # 서비스 초기화
+            influencer_service = InfluencerService(db, self.s3_service)
+            brightdata_service = BrightDataService(db)
+            
+            # URL에서 username 추출
+            url_username = brightdata_service._extract_username_from_url(job.url)
+            
+            # 기존 인플루언서 계정 삭제
+            logger.info(f"🗑️ 기존 인플루언서 계정 삭제: {url_username}")
+            try:
+                deleted_count = 0
+                if influencer_service.delete_profile(url_username):
+                    deleted_count += 1
+                
+                variations = [url_username.lower(), url_username.upper(), url_username.title()]
+                for variation in variations:
+                    if variation != url_username and influencer_service.delete_profile(variation):
+                        deleted_count += 1
+                
+                if deleted_count > 0:
+                    logger.info(f"✅ 기존 계정 {deleted_count}개 삭제 완료")
+            except Exception as e:
+                logger.error(f"❌ 기존 계정 삭제 실패: {str(e)}")
+            
+            # 프로필 수집
+            try:
+                logger.info(f"📡 프로필 API 요청: {url_username}")
+                profile_result = await asyncio.wait_for(
+                    brightdata_service._collect_single_data_type(
+                        job.url, url_username, "profile"
+                    ),
+                    timeout=60  # 프로필 최대 1분
+                )
+                
+                if profile_result and profile_result.get("profile"):
+                    await influencer_service.save_profile_data(profile_result["profile"], url_username)
+                    job.profile_status = "completed"
+                    job.profile_count = 1
+                    logger.info(f"✅ 프로필 수집 완료: {url_username}")
+                else:
+                    job.profile_status = "failed"
+                    logger.error(f"❌ 프로필 수집 실패: {url_username}")
+            except asyncio.TimeoutError:
+                job.profile_status = "failed"
+                logger.error(f"⏰ 프로필 수집 타임아웃: {url_username}")
+            except Exception as e:
+                job.profile_status = "failed"
+                logger.error(f"❌ 프로필 수집 오류: {url_username} - {str(e)}")
+            
+            # 릴스 수집 여부 확인하여 작업 상태 결정
+            if job.collect_reels:
+                # 릴스도 수집해야 하면 pending으로 유지
+                job.status = "pending"
+            else:
+                # 프로필만 수집하면 완료
+                job.status = "completed" if job.profile_status == "completed" else "failed"
+                job.completed_at = now_kst()
+            
+            db.commit()
+            logger.info(f"💾 프로필 작업 상태 저장: {url_username} - {job.profile_status}")
+            
+            # BrightData API rate limit 방지를 위한 대기
+            await asyncio.sleep(3)
+            
+        except Exception as e:
+            logger.error(f"🔥 프로필 처리 중 오류: {job_id} - {str(e)}")
+            try:
+                job = db.query(CollectionJob).filter(CollectionJob.job_id == job_id).first()
+                if job:
+                    job.status = "pending" if job.collect_reels else "failed"
+                    job.profile_status = "failed"
+                    job.error_message = str(e)
+                    db.commit()
+            except Exception:
+                db.rollback()
+        finally:
+            db.close()
+    
+    async def process_reels_only(self, job_id: str):
+        """릴스만 수집 (2단계)"""
+        db = self.Session()
+        try:
+            job = db.query(CollectionJob).filter(CollectionJob.job_id == job_id).first()
+            if not job or job.reels_status != "pending":
+                return
+            
+            # 작업 상태를 processing으로 변경
+            job.status = "processing"
+            job.reels_status = "processing"
+            if not job.started_at:
+                job.started_at = now_kst()
+            db.commit()
+            
+            logger.info(f"🔄 [릴스 수집 시작] {job.username} ({job.url})")
+            
+            # 서비스 초기화
+            influencer_service = InfluencerService(db, self.s3_service)
+            brightdata_service = BrightDataService(db)
+            
+            # URL에서 username 추출
+            url_username = brightdata_service._extract_username_from_url(job.url)
+            
+            # 릴스 수집
+            try:
+                logger.info(f"📡 릴스 API 요청: {url_username}")
+                reels_result = await asyncio.wait_for(
+                    brightdata_service._collect_single_data_type(
+                        job.url, url_username, "reels"
+                    ),
+                    timeout=600  # 릴스 최대 10분
+                )
+                
+                if reels_result and reels_result.get("reels"):
+                    saved_reels = await influencer_service.save_reels_data(reels_result["reels"], url_username)
+                    job.reels_status = "completed"
+                    job.reels_count = len(saved_reels)
+                    logger.info(f"✅ 릴스 수집 완료: {url_username} - {len(saved_reels)}개")
+                else:
+                    job.reels_status = "failed"
+                    logger.error(f"❌ 릴스 수집 실패: {url_username}")
+            except asyncio.TimeoutError:
+                job.reels_status = "failed"
+                logger.error(f"⏰ 릴스 수집 타임아웃: {url_username}")
+            except Exception as e:
+                job.reels_status = "failed"
+                logger.error(f"❌ 릴스 수집 오류: {url_username} - {str(e)}")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+            
+            # 전체 작업 완료 처리
+            if (not job.collect_profile or job.profile_status == "completed") and \
+               (not job.collect_reels or job.reels_status == "completed"):
+                job.status = "completed"
+                logger.info(f"✅ 전체 작업 완료: {url_username}")
+            else:
+                job.status = "failed"
+                logger.error(f"❌ 일부 작업 실패: {url_username}")
+            
+            job.completed_at = now_kst()
+            db.commit()
+            logger.info(f"💾 릴스 작업 상태 저장: {url_username} - {job.reels_status}")
+            
+            # BrightData API rate limit 방지를 위한 대기
+            await asyncio.sleep(3)
+            
+        except Exception as e:
+            logger.error(f"🔥 릴스 처리 중 오류: {job_id} - {str(e)}")
+            try:
+                job = db.query(CollectionJob).filter(CollectionJob.job_id == job_id).first()
+                if job:
+                    job.status = "failed"
+                    job.reels_status = "failed"
+                    job.error_message = str(e)
+                    job.completed_at = now_kst()
+                    db.commit()
+            except Exception:
+                db.rollback()
         finally:
             db.close()
     

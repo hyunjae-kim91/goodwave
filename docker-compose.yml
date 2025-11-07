@@ -47,7 +47,8 @@ services:
       dockerfile: Dockerfile
     container_name: goodwave_frontend
     environment:
-      - REACT_APP_API_BASE_URL=
+      - REACT_APP_API_BASE_URL=/api
+      - REACT_APP_BACKEND_URL=http://goodwave_backend:8000
       - HOST=0.0.0.0
     ports:
       - "3000:3000"

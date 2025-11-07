@@ -62,6 +62,9 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# Data snapshots
+backend/data_snapshots/
+
 # Flask stuff:
 instance/
 .webassets-cache
@@ -143,4 +146,13 @@ CLAUDE.md
 
 # Ignore node_modules
 frontend/node_modules/
+
+# Local development setup scripts and guides
+# NOTE: 팀과 공유하려면 아래 줄들을 제거하세요
+LOCAL_SETUP_GUIDE.md
+ANACONDA_GUIDE.md
+backend/run.py
+frontend/run.py
+backend_local.log
+frontend_local.log
 

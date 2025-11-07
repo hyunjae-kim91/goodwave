@@ -294,7 +294,7 @@ class InfluencerReel(Base):
 class InfluencerAnalysis(Base):
     __tablename__ = "influencer_analysis"
     
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     profile_id = Column(Integer, ForeignKey("influencer_profiles.id"), nullable=False)
     reel_id = Column(Integer, ForeignKey("influencer_reels.id"), nullable=True)
     analysis_type = Column(String(100), nullable=False)  # subscription_motivation, category, combined

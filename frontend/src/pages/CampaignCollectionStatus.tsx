@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { adminApi } from '../services/api';
+import { formatDateTimeKST } from '../utils/dateUtils';
 
 interface CollectionJob {
   id: number;
@@ -303,8 +304,9 @@ const CampaignCollectionStatus: React.FC = () => {
   const [retryingReelJobs, setRetryingReelJobs] = useState(false);
   const [retryingCollectionJobs, setRetryingCollectionJobs] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedCampaign, setSelectedCampaign] = useState<string>('all');
+  const [selectedCampaign, setSelectedCampaign] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [controlsExpanded, setControlsExpanded] = useState(false);
 
   useEffect(() => {
     fetchData();
@@ -313,13 +315,27 @@ const CampaignCollectionStatus: React.FC = () => {
   useEffect(() => {
     if (!data) return;
     
+    // 캠페인이 선택되지 않은 경우 빈 결과 반환
+    if (!selectedCampaign) {
+      setFilteredData({
+        campaigns: [],
+        summary: {
+          total_campaigns: 0,
+          total_jobs: 0,
+          completed_jobs: 0,
+          failed_jobs: 0,
+          pending_jobs: 0,
+          processing_jobs: 0
+        }
+      });
+      return;
+    }
+    
     let filtered = { ...data };
     
     // 캠페인별 필터링
-    if (selectedCampaign !== 'all') {
-      const campaignId = parseInt(selectedCampaign);
-      filtered.campaigns = data.campaigns.filter(c => c.campaign_id === campaignId);
-    }
+    const campaignId = parseInt(selectedCampaign);
+    filtered.campaigns = data.campaigns.filter(c => c.campaign_id === campaignId);
     
     // 상태별 필터링
     if (selectedStatus !== 'all') {
@@ -374,7 +390,7 @@ const CampaignCollectionStatus: React.FC = () => {
   const retryFailedJobs = async () => {
     try {
       setRetrying(true);
-      const campaignId = selectedCampaign !== 'all' ? parseInt(selectedCampaign) : undefined;
+      const campaignId = selectedCampaign ? parseInt(selectedCampaign) : undefined;
       await adminApi.retryFailedReelJobs(campaignId);
       // 재시도 후 데이터 새로고침
       await fetchData();
@@ -389,7 +405,7 @@ const CampaignCollectionStatus: React.FC = () => {
   const cancelProcessingJobs = async () => {
     try {
       setCancelling(true);
-      const campaignId = selectedCampaign !== 'all' ? parseInt(selectedCampaign) : undefined;
+      const campaignId = selectedCampaign ? parseInt(selectedCampaign) : undefined;
       await adminApi.cancelProcessingReelJobs(campaignId);
       // 취소 후 데이터 새로고침
       await fetchData();
@@ -440,7 +456,7 @@ const CampaignCollectionStatus: React.FC = () => {
     
     try {
       setDeletingPending(true);
-      const campaignId = selectedCampaign !== 'all' ? parseInt(selectedCampaign) : undefined;
+      const campaignId = selectedCampaign ? parseInt(selectedCampaign) : undefined;
       await adminApi.deletePendingJobs(campaignId);
       // 삭제 후 데이터 새로고침
       await fetchData();
@@ -459,7 +475,7 @@ const CampaignCollectionStatus: React.FC = () => {
     
     try {
       setDeletingFailed(true);
-      const campaignId = selectedCampaign !== 'all' ? parseInt(selectedCampaign) : undefined;
+      const campaignId = selectedCampaign ? parseInt(selectedCampaign) : undefined;
       await adminApi.deleteFailedJobs(campaignId);
       // 삭제 후 데이터 새로고침
       await fetchData();
@@ -478,7 +494,7 @@ const CampaignCollectionStatus: React.FC = () => {
     
     try {
       setDeletingCompleted(true);
-      const campaignId = selectedCampaign !== 'all' ? parseInt(selectedCampaign) : undefined;
+      const campaignId = selectedCampaign ? parseInt(selectedCampaign) : undefined;
       await adminApi.deleteCompletedJobs(campaignId);
       // 삭제 후 데이터 새로고침
       await fetchData();
@@ -497,7 +513,7 @@ const CampaignCollectionStatus: React.FC = () => {
     
     try {
       setRetryingReelJobs(true);
-      const campaignId = selectedCampaign !== 'all' ? parseInt(selectedCampaign) : undefined;
+      const campaignId = selectedCampaign ? parseInt(selectedCampaign) : undefined;
       await adminApi.retryFailedReelJobs(campaignId);
       // 재시도 후 데이터 새로고침
       await fetchData();
@@ -527,10 +543,6 @@ const CampaignCollectionStatus: React.FC = () => {
     }
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString('ko-KR');
-  };
-
   const formatUrl = (url: string) => {
     if (url.length > 50) {
       return url.substring(0, 50) + '...';
@@ -546,7 +558,7 @@ const CampaignCollectionStatus: React.FC = () => {
 
   return (
     <Container>
-      <Title>캠페인 수집 조회 - 업데이트됨</Title>
+      <Title>캠페인 수집 조회</Title>
 
       <FilterSection>
         <FilterGrid>
@@ -556,7 +568,7 @@ const CampaignCollectionStatus: React.FC = () => {
               value={selectedCampaign} 
               onChange={(e) => setSelectedCampaign(e.target.value)}
             >
-              <option value="all">전체 캠페인</option>
+              <option value="">캠페인을 선택하세요</option>
               {data.campaigns.map(campaign => (
                 <option key={campaign.campaign_id} value={campaign.campaign_id.toString()}>
                   {campaign.campaign_name || `캠페인 ${campaign.campaign_id}`}
@@ -585,40 +597,63 @@ const CampaignCollectionStatus: React.FC = () => {
         </FilterGrid>
       </FilterSection>
       
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem' }}>
-        <RefreshButton onClick={fetchData} disabled={loading}>
-          새로고침
-        </RefreshButton>
-        <ProcessButton onClick={processJobs} disabled={processing}>
-          {processing ? '처리 중...' : '대기 작업 처리'}
-        </ProcessButton>
-        <ProcessButton onClick={retryFailedReelJobs} disabled={retryingReelJobs}>
-          {retryingReelJobs ? '릴스 재시도 중...' : '실패 릴스 재시도'}
-        </ProcessButton>
-        <ProcessButton onClick={retryFailedCollectionJobs} disabled={retryingCollectionJobs}>
-          {retryingCollectionJobs ? '인플루언서 재시도 중...' : '실패 인플루언서 재시도'}
-        </ProcessButton>
-        <CancelButton onClick={cancelProcessingJobs} disabled={cancelling}>
-          {cancelling ? '취소 중...' : '처리중 작업 취소'}
-        </CancelButton>
-        <CancelButton onClick={stopCollectionWorker} disabled={stoppingWorker}>
-          {stoppingWorker ? '중지 중...' : '워커 중지'}
-        </CancelButton>
-        <CancelButton onClick={cancelAllProcessingJobs} disabled={cancellingAll}>
-          {cancellingAll ? '전체 취소 중...' : '전체 작업 중지'}
-        </CancelButton>
-      </div>
+      <div style={{ marginBottom: '2rem' }}>
+        <div 
+          onClick={() => setControlsExpanded(!controlsExpanded)} 
+          style={{ 
+            cursor: 'pointer', 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            gap: '0.5rem',
+            fontSize: '0.9rem',
+            color: '#495057',
+            fontWeight: '500',
+            marginBottom: controlsExpanded ? '1rem' : '0'
+          }}
+        >
+          <span style={{ fontSize: '0.8rem' }}>{controlsExpanded ? '▼' : '▶'}</span>
+          컨트롤
+        </div>
+        
+        {controlsExpanded && (
+          <>
+            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+              <RefreshButton onClick={fetchData} disabled={loading}>
+                새로고침
+              </RefreshButton>
+              <ProcessButton onClick={processJobs} disabled={processing}>
+                {processing ? '처리 중...' : '대기 작업 처리'}
+              </ProcessButton>
+              <ProcessButton onClick={retryFailedReelJobs} disabled={retryingReelJobs}>
+                {retryingReelJobs ? '릴스 재시도 중...' : '실패 릴스 재시도'}
+              </ProcessButton>
+              <ProcessButton onClick={retryFailedCollectionJobs} disabled={retryingCollectionJobs}>
+                {retryingCollectionJobs ? '인플루언서 재시도 중...' : '실패 인플루언서 재시도'}
+              </ProcessButton>
+              <CancelButton onClick={cancelProcessingJobs} disabled={cancelling}>
+                {cancelling ? '취소 중...' : '처리중 작업 취소'}
+              </CancelButton>
+              <CancelButton onClick={stopCollectionWorker} disabled={stoppingWorker}>
+                {stoppingWorker ? '중지 중...' : '워커 중지'}
+              </CancelButton>
+              <CancelButton onClick={cancelAllProcessingJobs} disabled={cancellingAll}>
+                {cancellingAll ? '전체 취소 중...' : '전체 작업 중지'}
+              </CancelButton>
+            </div>
 
-      <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '2rem', paddingTop: '1rem', borderTop: '1px solid #dee2e6' }}>
-        <CancelButton onClick={deletePendingJobs} disabled={deletingPending}>
-          {deletingPending ? '삭제 중...' : '대기 작업 삭제'}
-        </CancelButton>
-        <CancelButton onClick={deleteFailedJobs} disabled={deletingFailed}>
-          {deletingFailed ? '삭제 중...' : '실패 작업 삭제'}
-        </CancelButton>
-        <CancelButton onClick={deleteCompletedJobs} disabled={deletingCompleted}>
-          {deletingCompleted ? '삭제 중...' : '완료 작업 삭제'}
-        </CancelButton>
+            <div style={{ display: 'flex', gap: '0.5rem', paddingTop: '1rem', borderTop: '1px solid #dee2e6' }}>
+              <CancelButton onClick={deletePendingJobs} disabled={deletingPending}>
+                {deletingPending ? '삭제 중...' : '대기 작업 삭제'}
+              </CancelButton>
+              <CancelButton onClick={deleteFailedJobs} disabled={deletingFailed}>
+                {deletingFailed ? '삭제 중...' : '실패 작업 삭제'}
+              </CancelButton>
+              <CancelButton onClick={deleteCompletedJobs} disabled={deletingCompleted}>
+                {deletingCompleted ? '삭제 중...' : '완료 작업 삭제'}
+              </CancelButton>
+            </div>
+          </>
+        )}
       </div>
 
       <SummaryGrid>
@@ -650,7 +685,9 @@ const CampaignCollectionStatus: React.FC = () => {
 
       {displayData.campaigns.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '2rem', color: '#7f8c8d' }}>
-          선택한 조건에 해당하는 데이터가 없습니다.
+          {!selectedCampaign 
+            ? '상단에서 캠페인을 선택해주세요.' 
+            : '선택한 조건에 해당하는 데이터가 없습니다.'}
         </div>
       ) : (
         displayData.campaigns.map(campaign => (
@@ -753,10 +790,10 @@ const CampaignCollectionStatus: React.FC = () => {
                       )}
                     </TableCell>
                     <TableCell>
-                      {job.date_posted ? formatDate(job.date_posted) : formatDate(job.created_at)}
+                      {job.date_posted ? formatDateTimeKST(job.date_posted) : formatDateTimeKST(job.created_at)}
                     </TableCell>
                     <TableCell>
-                      {job.completed_at ? formatDate(job.completed_at) : '-'}
+                      {job.completed_at ? formatDateTimeKST(job.completed_at) : '-'}
                     </TableCell>
                     <TableCell>
                       {job.error_message ? (

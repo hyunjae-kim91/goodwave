@@ -5,6 +5,7 @@ import { Download, Loader2, CheckCircle, XCircle, Users, Activity, User, Video, 
 import { useAppStore } from '../../store/influencer/useAppStore';
 import { influencerApi } from '../../services/influencer/influencerApi';
 import { adminApi } from '../../services/api';
+import { formatDateTimeKST, formatTimeKST } from '../../utils/dateUtils';
 
 const Section = styled.div`
   background: white;
@@ -773,6 +774,7 @@ const IngestTab: React.FC = () => {
   const [retryLoading, setRetryLoading] = useState(false);
   const [stopLoading, setStopLoading] = useState(false);
   const [stopAllLoading, setStopAllLoading] = useState(false);
+  const [queueExpanded, setQueueExpanded] = useState(false);
   
   // SSE 연결 설정
   const setupSSE = (sessionId: string) => {
@@ -782,7 +784,7 @@ const IngestTab: React.FC = () => {
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        const timestamp = new Date().toLocaleTimeString();
+        const timestamp = formatTimeKST(new Date().toISOString());
         
         switch (data.event) {
           case 'start':
@@ -898,7 +900,7 @@ const IngestTab: React.FC = () => {
     
     eventSource.onerror = (error) => {
       console.error('SSE 연결 오류:', error);
-      const timestamp = new Date().toLocaleTimeString();
+      const timestamp = formatTimeKST(new Date().toISOString());
       setProgressLogs(prev => [...(Array.isArray(prev) ? prev : []), `[${timestamp}] ⚠️ 실시간 연결이 끊어졌습니다.`]);
     };
   };
@@ -1006,23 +1008,7 @@ const IngestTab: React.FC = () => {
     skipped: '건너뜀'
   };
 
-  const formatDateTime = (value?: string | null) => {
-    if (!value) {
-      return '-';
-    }
-
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return value;
-    }
-
-    return date.toLocaleString('ko-KR', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
+  // formatDateTime 함수는 utils/dateUtils.ts의 formatDateTimeKST로 대체됨
 
   const handleRefreshClick = () => {
     void refreshQueueData(true);
@@ -1035,16 +1021,10 @@ const IngestTab: React.FC = () => {
     void refreshQueueData(true, value);
   };
 
-  // 컴포넌트 마운트 시 데이터 로드
+  // 컴포넌트 마운트 시 데이터 로드 (자동 새로고침 비활성화)
   useEffect(() => {
     refreshQueueData();
-
-    // 5초마다 자동 새로고침
-    const interval = setInterval(() => {
-      refreshQueueData();
-    }, 5000);
-    
-    return () => clearInterval(interval);
+    // 자동 새로고침 제거 - 수동 새로고침 버튼만 사용
   }, [refreshQueueData]);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1340,7 +1320,13 @@ const IngestTab: React.FC = () => {
     <div>
       <Section>
         <QueueHeader>
-          <SectionTitle>수집 큐 현황</SectionTitle>
+          <SectionTitle 
+            onClick={() => setQueueExpanded(!queueExpanded)} 
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <span>{queueExpanded ? '▼' : '▶'}</span>
+            수집 큐 현황
+          </SectionTitle>
           <QueueControls>
             <QueueFilterGroup>
               <span>상태</span>
@@ -1398,34 +1384,32 @@ const IngestTab: React.FC = () => {
           </QueueControls>
         </QueueHeader>
 
-        <SummaryGrid>
-          <SummaryCard>
-            <SummaryLabel>총 작업</SummaryLabel>
-            <SummaryValue>{jobSummary.total}</SummaryValue>
-          </SummaryCard>
-          <SummaryCard>
-            <SummaryLabel>대기</SummaryLabel>
-            <SummaryValue>{jobSummary.pending}</SummaryValue>
-          </SummaryCard>
-          <SummaryCard>
-            <SummaryLabel>진행 중</SummaryLabel>
-            <SummaryValue>{jobSummary.processing}</SummaryValue>
-          </SummaryCard>
-          <SummaryCard>
-            <SummaryLabel>완료</SummaryLabel>
-            <SummaryValue>{jobSummary.completed}</SummaryValue>
-          </SummaryCard>
-          <SummaryCard>
-            <SummaryLabel>실패</SummaryLabel>
-            <SummaryValue>{jobSummary.failed}</SummaryValue>
-          </SummaryCard>
-          <SummaryCard>
-            <SummaryLabel>최근 24시간</SummaryLabel>
-            <SummaryValue>{jobSummary.recent_24h}</SummaryValue>
-          </SummaryCard>
-        </SummaryGrid>
+        {queueExpanded && (
+          <>
+            <SummaryGrid>
+              <SummaryCard>
+                <SummaryLabel>총 작업</SummaryLabel>
+                <SummaryValue>{jobSummary.total}</SummaryValue>
+              </SummaryCard>
+              <SummaryCard>
+                <SummaryLabel>대기</SummaryLabel>
+                <SummaryValue>{jobSummary.pending}</SummaryValue>
+              </SummaryCard>
+              <SummaryCard>
+                <SummaryLabel>진행 중</SummaryLabel>
+                <SummaryValue>{jobSummary.processing}</SummaryValue>
+              </SummaryCard>
+              <SummaryCard>
+                <SummaryLabel>완료</SummaryLabel>
+                <SummaryValue>{jobSummary.completed}</SummaryValue>
+              </SummaryCard>
+              <SummaryCard>
+                <SummaryLabel>실패</SummaryLabel>
+                <SummaryValue>{jobSummary.failed}</SummaryValue>
+              </SummaryCard>
+            </SummaryGrid>
 
-        <QueueTableWrapper>
+            <QueueTableWrapper>
           {jobsToRender.length > 0 ? (
             <QueueTable>
               <thead>
@@ -1472,7 +1456,7 @@ const IngestTab: React.FC = () => {
                           title={!isSelectable ? '진행 중인 작업은 삭제할 수 없습니다' : undefined}
                         />
                       </QueueCell>
-                      <QueueCell>{formatDateTime(job.created_at)}</QueueCell>
+                      <QueueCell>{formatDateTimeKST(job.created_at)}</QueueCell>
                       <QueueCell>
                         <Username>{job.username ? `@${job.username}` : '미확인 계정'}</Username>
                         {job.url ? (
@@ -1487,9 +1471,9 @@ const IngestTab: React.FC = () => {
                         <StatusPill status={jobStatus}>{jobStatusLabelMap[jobStatus]}</StatusPill>
                         {(job.started_at || job.completed_at) && (
                           <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#868e96' }}>
-                            {job.started_at && `시작 ${formatDateTime(job.started_at)}`}
+                            {job.started_at && `시작 ${formatDateTimeKST(job.started_at)}`}
                             {job.started_at && job.completed_at && ' · '}
-                            {job.completed_at && `완료 ${formatDateTime(job.completed_at)}`}
+                            {job.completed_at && `완료 ${formatDateTimeKST(job.completed_at)}`}
                           </div>
                         )}
                       </QueueCell>
@@ -1555,6 +1539,8 @@ const IngestTab: React.FC = () => {
             </QueueEmpty>
           )}
         </QueueTableWrapper>
+          </>
+        )}
       </Section>
 
       <Section>

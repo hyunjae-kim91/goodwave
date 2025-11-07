@@ -77,7 +77,7 @@ const InfluencerAnalysis: React.FC<InfluencerAnalysisProps> = ({ activeTab = 'in
 
   return (
     <Container>
-      <Title>굿웨이브 인플루언서 분석 - {getPageTitle()}</Title>
+      <Title>{getPageTitle()}</Title>
       
       <ContentSection>
         {renderSubTab()}

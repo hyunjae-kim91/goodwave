@@ -11,6 +11,7 @@ import {
   AggregatedSummaryResponse,
 } from '../../services/influencer/classificationService';
 import { promptService } from '../../services/influencer/promptService';
+import { formatDateTimeKST } from '../../utils/dateUtils';
 
 interface UserData {
   username: string;
@@ -317,19 +318,7 @@ const ListButton = styled.button`
   }
 `;
 
-const formatDateTime = (value?: string) => {
-  if (!value) return '-';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    return '-';
-  }
-  return parsed.toLocaleString('ko-KR', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
+// formatDateTime 함수는 utils/dateUtils.ts의 formatDateTimeKST로 대체됨
 
 const isRecord = (value: unknown): value is Record<string, unknown> => {
   return !!value && typeof value === 'object' && !Array.isArray(value);
@@ -515,6 +504,10 @@ const CombinedClassificationTab: React.FC = () => {
   const [individualReelData, setIndividualReelData] = useState<IndividualReelClassificationResponse | null>(null);
   const [showIndividualReels, setShowIndividualReels] = useState(false);
   const [deletingReelIds, setDeletingReelIds] = useState<number[]>([]);
+  const [queueExpanded, setQueueExpanded] = useState(false);
+  const [bulkProcessExpanded, setBulkProcessExpanded] = useState(false);
+  const [quickSelectExpanded, setQuickSelectExpanded] = useState(false);
+  const [promptExpanded, setPromptExpanded] = useState(false);
 
   const filteredUsers = useMemo(() => {
     const term = userSearch.trim().toLowerCase();
@@ -745,13 +738,7 @@ const CombinedClassificationTab: React.FC = () => {
     loadUsers();
     loadPromptTypes();
     refreshClassificationJobs(true);
-  }, []);
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      refreshClassificationJobs();
-    }, 7000);
-    return () => clearInterval(interval);
+    // 자동 새로고침 제거 - 수동 새로고침 버튼만 사용
   }, []);
 
   useEffect(() => {
@@ -975,7 +962,13 @@ const CombinedClassificationTab: React.FC = () => {
 
       <Section>
         <QueueHeader>
-          <SectionTitle>분류 큐 현황</SectionTitle>
+          <SectionTitle 
+            onClick={() => setQueueExpanded(!queueExpanded)} 
+            style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <span>{queueExpanded ? '▼' : '▶'}</span>
+            분류 큐 현황
+          </SectionTitle>
           <QueueActions>
             <Button
               $variant="danger"
@@ -992,7 +985,7 @@ const CombinedClassificationTab: React.FC = () => {
           </QueueActions>
         </QueueHeader>
 
-        {classificationJobs.length > 0 ? (
+        {queueExpanded && (classificationJobs.length > 0 ? (
           <QueueTable>
             <thead>
               <tr>
@@ -1023,10 +1016,10 @@ const CombinedClassificationTab: React.FC = () => {
                   <QueueCell>
                     <StatusBadge status={job.status}>{CLASSIFICATION_STATUS_LABELS[job.status]}</StatusBadge>
                   </QueueCell>
-                  <QueueCell>{formatDateTime(job.created_at)}</QueueCell>
+                  <QueueCell>{formatDateTimeKST(job.created_at)}</QueueCell>
                   <QueueCell>
-                    <div>시작: {formatDateTime(job.started_at)}</div>
-                    <div>완료: {formatDateTime(job.completed_at)}</div>
+                    <div>시작: {formatDateTimeKST(job.started_at)}</div>
+                    <div>완료: {formatDateTimeKST(job.completed_at)}</div>
                   </QueueCell>
                   <QueueCell style={{ color: job.status === 'failed' ? '#c92a2a' : '#495057' }}>
                     {job.error_message || '-'}
@@ -1037,11 +1030,99 @@ const CombinedClassificationTab: React.FC = () => {
           </QueueTable>
         ) : (
           <QueueEmpty>표시할 작업이 없습니다. 새로운 분류 작업을 추가해보세요.</QueueEmpty>
-        )}
+        ))}
       </Section>
 
       <Section>
-        <SectionTitle>사용자 빠른 선택</SectionTitle>
+        <SectionTitle 
+          onClick={() => setBulkProcessExpanded(!bulkProcessExpanded)} 
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+        >
+          <span>{bulkProcessExpanded ? '▼' : '▶'}</span>
+          사용자 선택 및 일괄 처리
+        </SectionTitle>
+        {bulkProcessExpanded && (<>
+        <SearchContainer style={{ marginBottom: '1rem' }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <Search
+              style={{
+                position: 'absolute',
+                left: '0.75rem',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                width: '1rem',
+                height: '1rem',
+                color: '#6c757d',
+              }}
+            />
+            <SearchInput
+              type="text"
+              value={userSearch}
+              onChange={(event) => setUserSearch(event.target.value)}
+              placeholder="사용자 검색..."
+            />
+          </div>
+          <Button onClick={toggleAllUsers}>
+            <CheckCircle size={16} />
+            {selectedUsersForClassification.length === filteredUsers.length && filteredUsers.length > 0 ? '전체 해제' : '전체 선택'}
+          </Button>
+          <Button onClick={bulkRunCombined} disabled={bulkClassifying || selectedUsersForClassification.length === 0 || !systemPrompt}>
+            <Play size={16} />
+            {bulkClassifying ? '분류 중...' : `일괄 분류 (${selectedUsersForClassification.length})`}
+          </Button>
+        </SearchContainer>
+
+        <div style={{ overflowX: 'auto' }}>
+          <SelectionTable>
+            <thead>
+              <tr>
+                <SelectionHeadCell style={{ width: '2.25rem' }}>선택</SelectionHeadCell>
+                <SelectionHeadCell>사용자명</SelectionHeadCell>
+                <SelectionHeadCell>데이터 상태</SelectionHeadCell>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredUsers.map(user => (
+                <SelectionRow key={user.username}>
+                  <SelectionCell>
+                    <input
+                      type="checkbox"
+                      checked={selectedUsersForClassification.includes(user.username)}
+                      onChange={() => toggleUserSelection(user.username)}
+                      style={{ width: '1rem', height: '1rem' }}
+                    />
+                  </SelectionCell>
+                  <SelectionCell>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                      <UserBadge>{user.username.charAt(0).toUpperCase()}</UserBadge>
+                      @{user.username}
+                    </div>
+                  </SelectionCell>
+                  <SelectionCell>{getUserStatusText(user)}</SelectionCell>
+                </SelectionRow>
+              ))}
+            </tbody>
+          </SelectionTable>
+        </div>
+
+        {filteredUsers.length === 0 && (
+          <EmptyPlaceholder>
+            <Database size={48} style={{ marginBottom: '1rem', color: '#dee2e6' }} />
+            <p>{userSearch ? '검색 결과가 없습니다.' : '사용자 목록이 없습니다.'}</p>
+          </EmptyPlaceholder>
+        )}
+        </>)}
+      </Section>
+
+      <Section>
+        <SectionTitle 
+          onClick={() => setQuickSelectExpanded(!quickSelectExpanded)} 
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+        >
+          <span>{quickSelectExpanded ? '▼' : '▶'}</span>
+          사용자 빠른 선택
+        </SectionTitle>
+        {quickSelectExpanded && (<>
         <SearchContainer>
           <div style={{ position: 'relative', flex: 1 }}>
             <Search
@@ -1084,6 +1165,57 @@ const CombinedClassificationTab: React.FC = () => {
             </ListButton>
           ))}
         </div>
+        </>)}
+      </Section>
+
+      <Section>
+        <SectionTitle 
+          onClick={() => setPromptExpanded(!promptExpanded)} 
+          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+        >
+          <span>{promptExpanded ? '▼' : '▶'}</span>
+          저장된 프롬프트
+        </SectionTitle>
+        {promptExpanded && (<>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            <label htmlFor="prompt-selector" style={{ fontSize: '0.9rem', color: '#495057', fontWeight: 600 }}>
+              사용할 프롬프트
+            </label>
+            <select
+              id="prompt-selector"
+              value={selectedPromptType}
+              onChange={(event) => handlePromptTypeChange(event.target.value)}
+              disabled={promptTypes.length === 0}
+              style={{
+                padding: '0.5rem 0.75rem',
+                borderRadius: '4px',
+                border: '1px solid #ced4da',
+                fontSize: '0.9rem',
+                color: '#495057',
+                minWidth: '12rem',
+              }}
+            >
+              {promptTypes.length === 0 ? (
+                <option value="" disabled>
+                  저장된 프롬프트가 없습니다
+                </option>
+              ) : (
+                promptTypes.map(type => (
+                  <option key={type} value={type}>{type}</option>
+                ))
+              )}
+            </select>
+            <Button $variant="secondary" onClick={loadPromptTypes}>
+              <RefreshCw size={16} /> 프롬프트 새로고침
+            </Button>
+          </div>
+          <Button onClick={runCombined} disabled={!selectedUser || !systemPrompt}>
+            <Play size={16} /> 통합 분류 실행
+          </Button>
+        </div>
+        <PromptBox>{systemPrompt || '저장된 프롬프트가 없습니다.'}</PromptBox>
+        </>)}
       </Section>
 
       {selectedUser && (
@@ -1162,7 +1294,7 @@ const CombinedClassificationTab: React.FC = () => {
                       </SummaryItem>
                     )}
                     <SummaryItem>
-                      갱신 시각: {combinedSummary.timestamp ? formatDateTime(combinedSummary.timestamp) : '-'}
+                      갱신 시각: {combinedSummary.timestamp ? formatDateTimeKST(combinedSummary.timestamp) : '-'}
                     </SummaryItem>
                   </SummaryCard>
                 )}
@@ -1340,121 +1472,6 @@ const CombinedClassificationTab: React.FC = () => {
           )}
         </Section>
       )}
-
-      <Section>
-      <SectionTitle>저장된 프롬프트</SectionTitle>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <label htmlFor="prompt-selector" style={{ fontSize: '0.9rem', color: '#495057', fontWeight: 600 }}>
-              사용할 프롬프트
-            </label>
-            <select
-              id="prompt-selector"
-              value={selectedPromptType}
-              onChange={(event) => handlePromptTypeChange(event.target.value)}
-              disabled={promptTypes.length === 0}
-              style={{
-                padding: '0.5rem 0.75rem',
-                borderRadius: '4px',
-                border: '1px solid #ced4da',
-                fontSize: '0.9rem',
-                color: '#495057',
-                minWidth: '12rem',
-              }}
-            >
-              {promptTypes.length === 0 ? (
-                <option value="" disabled>
-                  저장된 프롬프트가 없습니다
-                </option>
-              ) : (
-                promptTypes.map(type => (
-                  <option key={type} value={type}>{type}</option>
-                ))
-              )}
-            </select>
-            <Button $variant="secondary" onClick={loadPromptTypes}>
-              <RefreshCw size={16} /> 프롬프트 새로고침
-            </Button>
-          </div>
-          <Button onClick={runCombined} disabled={!selectedUser || !systemPrompt}>
-            <Play size={16} /> 통합 분류 실행
-          </Button>
-        </div>
-        <PromptBox>{systemPrompt || '저장된 프롬프트가 없습니다.'}</PromptBox>
-      </Section>
-
-      <Section>
-        <SectionTitle>사용자 선택 및 일괄 처리</SectionTitle>
-        <SearchContainer style={{ marginBottom: '1rem' }}>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <Search
-              style={{
-                position: 'absolute',
-                left: '0.75rem',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                width: '1rem',
-                height: '1rem',
-                color: '#6c757d',
-              }}
-            />
-            <SearchInput
-              type="text"
-              value={userSearch}
-              onChange={(event) => setUserSearch(event.target.value)}
-              placeholder="사용자 검색..."
-            />
-          </div>
-          <Button onClick={toggleAllUsers}>
-            <CheckCircle size={16} />
-            {selectedUsersForClassification.length === filteredUsers.length && filteredUsers.length > 0 ? '전체 해제' : '전체 선택'}
-          </Button>
-          <Button onClick={bulkRunCombined} disabled={bulkClassifying || selectedUsersForClassification.length === 0 || !systemPrompt}>
-            <Play size={16} />
-            {bulkClassifying ? '분류 중...' : `일괄 분류 (${selectedUsersForClassification.length})`}
-          </Button>
-        </SearchContainer>
-
-        <div style={{ overflowX: 'auto' }}>
-          <SelectionTable>
-            <thead>
-              <tr>
-                <SelectionHeadCell style={{ width: '2.25rem' }}>선택</SelectionHeadCell>
-                <SelectionHeadCell>사용자명</SelectionHeadCell>
-                <SelectionHeadCell>데이터 상태</SelectionHeadCell>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredUsers.map(user => (
-                <SelectionRow key={user.username}>
-                  <SelectionCell>
-                    <input
-                      type="checkbox"
-                      checked={selectedUsersForClassification.includes(user.username)}
-                      onChange={() => toggleUserSelection(user.username)}
-                      style={{ width: '1rem', height: '1rem' }}
-                    />
-                  </SelectionCell>
-                  <SelectionCell>
-                    <div style={{ display: 'flex', alignItems: 'center' }}>
-                      <UserBadge>{user.username.charAt(0).toUpperCase()}</UserBadge>
-                      @{user.username}
-                    </div>
-                  </SelectionCell>
-                  <SelectionCell>{getUserStatusText(user)}</SelectionCell>
-                </SelectionRow>
-              ))}
-            </tbody>
-          </SelectionTable>
-        </div>
-
-        {filteredUsers.length === 0 && (
-          <EmptyPlaceholder>
-            <Database size={48} style={{ marginBottom: '1rem', color: '#dee2e6' }} />
-            <p>{userSearch ? '검색 결과가 없습니다.' : '사용자 목록이 없습니다.'}</p>
-          </EmptyPlaceholder>
-        )}
-      </Section>
     </Container>
   );
 };

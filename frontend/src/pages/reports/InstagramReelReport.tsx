@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+﻿import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { useParams } from 'react-router-dom';
 import { Line } from 'react-chartjs-2';
@@ -32,7 +32,7 @@ const ANALYSIS_PLACEHOLDER = '인플루언서 분석 수집 필요';
 
 const getAnalysisValue = (value?: string | null): string => {
   const normalized = (value ?? '').trim();
-  // 빈 값이나 null인 경우에만 "수집 필요" 표시
+  // 빈 값이거나 null인 경우에만 "수집 필요" 표시
   // "미분류"나 다른 분류 결과는 모두 유효한 분석 결과로 인정
   return normalized ? normalized : ANALYSIS_PLACEHOLDER;
 };
@@ -51,10 +51,34 @@ const Header = styled.div`
   margin-bottom: 2rem;
 `;
 
-const TitleRow = styled.div`
+const TopControls = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: white;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+`;
+
+const ControlsLeft = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+`;
+
+const ControlsRight = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+`;
+
+const TitleRow = styled.div`
   margin-bottom: 1rem;
 `;
 
@@ -72,29 +96,46 @@ const CampaignSelector = styled.select`
 `;
 
 const CampaignInfo = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
   margin-bottom: 2rem;
+`;
+
+const InfoRow = styled.div`
+  display: grid;
+  gap: 0.8rem;
+  
+  &.top-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  &.bottom-row {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr !important;
+  }
 `;
 
 const InfoCard = styled.div`
   background: #f8f9fa;
-  padding: 1rem;
+  padding: 0.8rem;
   border-radius: 4px;
   text-align: center;
 `;
 
 const InfoLabel = styled.div`
   color: #6c757d;
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  margin-bottom: 0.4rem;
 `;
 
 const InfoValue = styled.div`
   color: #2c3e50;
   font-weight: 600;
-  font-size: 1.1rem;
+  font-size: 1rem;
 `;
 
 const ChartSection = styled.div`
@@ -109,11 +150,12 @@ const TableContainer = styled.div`
   background: white;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  overflow: hidden;
+  overflow-x: auto;
 `;
 
 const Table = styled.table`
   width: 100%;
+  white-space: nowrap;
   border-collapse: collapse;
 `;
 
@@ -132,20 +174,20 @@ const HeaderCell = styled.th`
   white-space: nowrap;
 
   &.image-column {
-    width: 80px;
+    width: 140px;
     text-align: center;
   }
 
   &.user-column {
-    min-width: 150px;
+    min-width: 250px;
   }
 
   &.view-column {
-    min-width: 120px;
+    width: 100px;
   }
 
   &.meta-column {
-    min-width: 100px;
+    width: 100px;
   }
 `;
 
@@ -173,8 +215,8 @@ const TableCell = styled.td`
 `;
 
 const ReelImage = styled.img`
-  width: 60px;
-  height: 60px;
+  width: 120px;
+  height: 120px;
   object-fit: cover;
   border-radius: 4px;
   cursor: pointer;
@@ -217,6 +259,11 @@ const Grade = styled.span<{ grade: string }>`
     props.grade === 'A' ? '#27ae60' :
     props.grade === 'B' ? '#f39c12' : '#95a5a6'
   };
+`;
+
+const AvgViewCount = styled.div`
+  font-size: 0.85rem;
+  color: #6c757d;
 `;
 
 const FollowerCount = styled.div`
@@ -285,7 +332,7 @@ const ShareButton = styled.button`
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
-  width: 100%;
+  white-space: nowrap;
   transition: background-color 0.2s;
 
   &:hover {
@@ -306,7 +353,7 @@ const PDFButton = styled.button`
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
-  width: 100%;
+  white-space: nowrap;
   transition: background-color 0.2s;
 
   &:hover {
@@ -421,14 +468,14 @@ const InstagramReelReport: React.FC = () => {
     // 클립보드 API 사용 가능 여부 확인
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(shareUrl).then(() => {
-        alert('보고서 링크가 클립보드에 복사되었습니다!');
+        alert('보고서 링크가 클립보드에 복사되었습니다');
       }).catch(() => {
         // 클립보드 복사가 실패한 경우 URL을 표시
-        prompt('보고서 링크를 복사하세요:', shareUrl);
+        prompt('보고서 링크를 복사하세요', shareUrl);
       });
     } else {
       // 클립보드 API를 지원하지 않는 경우 직접 URL 표시
-      prompt('보고서 링크를 복사하세요:', shareUrl);
+      prompt('보고서 링크를 복사하세요', shareUrl);
     }
   };
 
@@ -532,7 +579,7 @@ const InstagramReelReport: React.FC = () => {
       }
     });
     
-    // 날짜 객체로 정렬한 후 표시용 문자열 생성
+    // 날짜 객체를 정렬한 후 표시용 문자열 생성
     const allDates = Array.from(dateMap.entries())
       .sort(([, a], [, b]) => a.getTime() - b.getTime())
       .map(([dateStr]) => dateStr);
@@ -582,7 +629,7 @@ const InstagramReelReport: React.FC = () => {
       },
       title: {
         display: true,
-        text: '계정별 일자별 비디오 조회수 추이'
+        text: '계정별 시간대별 비디오 조회수 추이'
       }
     },
     scales: {
@@ -613,7 +660,7 @@ const InstagramReelReport: React.FC = () => {
         <Header>
           <Title>인스타그램 캠페인 보고서</Title>
           <NoDataMessage>
-            <h3>📊 사용 가능한 인스타그램 캠페인이 없습니다</h3>
+            <h3>현재 사용 가능한 인스타그램 캠페인이 없습니다</h3>
             <p>새 캠페인을 생성하고 데이터를 수집한 후 다시 확인해주세요.</p>
           </NoDataMessage>
         </Header>
@@ -623,9 +670,8 @@ const InstagramReelReport: React.FC = () => {
 
   return (
     <Container id="report-content">
-      <Header>
-        <TitleRow>
-          <Title>인스타그램 캠페인 보고서</Title>
+      <TopControls>
+        <ControlsLeft>
           {!campaignName && (
             <CampaignSelector
               value={selectedCampaign}
@@ -638,48 +684,77 @@ const InstagramReelReport: React.FC = () => {
               ))}
             </CampaignSelector>
           )}
+        </ControlsLeft>
+        <ControlsRight>
+          {!campaignName && (
+            <>
+              <ShareButton onClick={() => handleShare()}>
+                📤 보고서 공유
+              </ShareButton>
+              <PDFButton 
+                onClick={() => handlePDFDownload()} 
+                disabled={pdfLoading}
+              >
+                {pdfLoading ? '📄 PDF 생성 중..' : '📄 PDF 다운로드'}
+              </PDFButton>
+            </>
+          )}
+        </ControlsRight>
+      </TopControls>
+
+      <Header>
+        <TitleRow>
+          <Title>인스타그램 캠페인 보고서</Title>
         </TitleRow>
 
-        {reportData && (
-          <CampaignInfo>
-            <InfoCard>
-              <InfoLabel>캠페인명</InfoLabel>
-              <InfoValue>{reportData.campaign.name}</InfoValue>
-            </InfoCard>
-            <InfoCard>
-              <InfoLabel>제품</InfoLabel>
-              <InfoValue>{reportData.campaign.product}</InfoValue>
-            </InfoCard>
-            <InfoCard>
-              <InfoLabel>기간</InfoLabel>
-              <InfoValue>
-                {new Date(reportData.campaign.start_date).toLocaleDateString()} ~{' '}
-                {new Date(reportData.campaign.end_date).toLocaleDateString()}
-              </InfoValue>
-            </InfoCard>
-            <InfoCard>
-              <InfoLabel>총 릴스 수</InfoLabel>
-              <InfoValue>{reportData.unique_reel_count || reportData.reels.length}</InfoValue>
-            </InfoCard>
-            <InfoCard>
-              <InfoLabel>광고비</InfoLabel>
-              <InfoValue>{reportData.campaign.budget?.toLocaleString() || 0}원</InfoValue>
-            </InfoCard>
-            {!campaignName && (
-              <InfoCard style={{ display: pdfLoading ? 'none' : 'block' }}>
-                <ShareButton onClick={() => handleShare()}>
-                  📤 보고서 공유
-                </ShareButton>
-                <PDFButton 
-                  onClick={() => handlePDFDownload()} 
-                  disabled={pdfLoading}
-                >
-                  {pdfLoading ? '📄 PDF 생성 중...' : '📄 PDF 다운로드'}
-                </PDFButton>
-              </InfoCard>
-            )}
-          </CampaignInfo>
-        )}
+        {reportData && (() => {
+          // 전체 조회수 계산 (최신 기준)
+          const totalViews = reportData.reels.reduce((sum, reel) => sum + (reel.video_view_count || 0), 0);
+          
+          // CPV 계산 (광고비 / 전체 조회수)
+          const budget = reportData.campaign.budget || 0;
+          const cpv = totalViews > 0 ? budget / totalViews : 0;
+          
+          return (
+            <CampaignInfo>
+              <InfoRow className="top-row">
+                <InfoCard>
+                  <InfoLabel>캠페인명</InfoLabel>
+                  <InfoValue>{reportData.campaign.name}</InfoValue>
+                </InfoCard>
+                <InfoCard>
+                  <InfoLabel>제품</InfoLabel>
+                  <InfoValue>{reportData.campaign.product}</InfoValue>
+                </InfoCard>
+                <InfoCard>
+                  <InfoLabel>기간</InfoLabel>
+                  <InfoValue>
+                    {new Date(reportData.campaign.start_date).toLocaleDateString()} ~{' '}
+                    {new Date(reportData.campaign.end_date).toLocaleDateString()}
+                  </InfoValue>
+                </InfoCard>
+              </InfoRow>
+              <InfoRow className="bottom-row">
+                <InfoCard>
+                  <InfoLabel>총 릴스 수</InfoLabel>
+                  <InfoValue>{reportData.unique_reel_count || reportData.reels.length}</InfoValue>
+                </InfoCard>
+                <InfoCard>
+                  <InfoLabel>광고비</InfoLabel>
+                  <InfoValue>{budget.toLocaleString()}원</InfoValue>
+                </InfoCard>
+                <InfoCard>
+                  <InfoLabel>전체 조회수</InfoLabel>
+                  <InfoValue>{totalViews.toLocaleString()}회</InfoValue>
+                </InfoCard>
+                <InfoCard>
+                  <InfoLabel>CPV</InfoLabel>
+                  <InfoValue>{cpv.toFixed(2)}원</InfoValue>
+                </InfoCard>
+              </InfoRow>
+            </CampaignInfo>
+          );
+        })()}
 
         {error && (
           <ErrorMessage>{error}</ErrorMessage>
@@ -700,16 +775,7 @@ const InstagramReelReport: React.FC = () => {
               </HeaderRow>
             </TableHeader>
             <TableBody>
-              {reportData.reels
-                .reduce((acc, reel) => {
-                  const existingReel = acc.find(r => r.username === reel.username);
-                  if (!existingReel || new Date(reel.posted_at || 0) > new Date(existingReel.posted_at || 0)) {
-                    const filteredAcc = acc.filter(r => r.username !== reel.username);
-                    return [...filteredAcc, reel];
-                  }
-                  return acc;
-                }, [] as typeof reportData.reels)
-                .map(reel => {
+              {reportData.reels.map(reel => {
                   const gradeValue = getAnalysisValue(reel.grade);
                   return (
                     <TableRow key={reel.id}>
@@ -728,12 +794,17 @@ const InstagramReelReport: React.FC = () => {
                           @{reel.username}
                           <Grade grade={gradeValue}>{gradeValue}</Grade>
                         </Username>
-                        {reel.display_name && (
+                        {reel.display_name && reel.display_name !== reel.username && (
                           <DisplayName>{reel.display_name}</DisplayName>
                         )}
                         <FollowerCount>
                           팔로워: {reel.follower_count?.toLocaleString() || 'N/A'}
                         </FollowerCount>
+                        {reel.grade_avg_views && (
+                          <AvgViewCount>
+                            조회수 평균: {Math.round(reel.grade_avg_views).toLocaleString()}
+                          </AvgViewCount>
+                        )}
                       </UserInfo>
                     </TableCell>
                       <TableCell>
@@ -758,15 +829,89 @@ const InstagramReelReport: React.FC = () => {
         </TableContainer>
       )}
 
-      {reportData && reportData.reels && reportData.reels.length > 0 && chartData && (
-        <ChartSection>
-          <Line data={chartData} options={chartOptions} />
-        </ChartSection>
-      )}
+      {reportData && reportData.reels && reportData.reels.length > 0 && reportData.chart_data_by_reel && (() => {
+        // 계정별 카운트 관리
+        const usernameCount: { [key: string]: number } = {};
+        const usernameOccurrence: { [key: string]: number } = {};
+        
+        // 각 계정이 몇 개씩 있는지 카운트
+        Object.entries(reportData.chart_data_by_reel).forEach(([reelUrl]) => {
+          const reel = reportData.reels.find(r => r.reel_url === reelUrl || r.campaign_url === reelUrl);
+          if (reel && reel.username) {
+            usernameCount[reel.username] = (usernameCount[reel.username] || 0) + 1;
+          }
+        });
+        
+        // 차상 팔레트
+        const colors = [
+          '#3498db', '#e74c3c', '#2ecc71', '#f39c12', '#9b59b6', 
+          '#1abc9c', '#34495e', '#e67e22', '#95a5a6', '#d35400'
+        ];
+        
+        // 모든 날짜 수집 (모든 릴스의 날짜 수집함) - yyyy-mm-dd 형식으로 변환
+        const allDatesSet = new Set<string>();
+        Object.values(reportData.chart_data_by_reel).forEach((chartInfo: any) => {
+          chartInfo.labels.forEach((date: string) => {
+            // yyyy-mm-dd 형식으로 변환 (시간 부분 제거)
+            const dateOnly = date.split(' ')[0];
+            allDatesSet.add(dateOnly);
+          });
+        });
+        const allDates = Array.from(allDatesSet).sort();
+        
+        // 각 릴스를 데이터셋으로 변환
+        const datasets = Object.entries(reportData.chart_data_by_reel).map(([reelUrl, chartInfo]: [string, any], index) => {
+          const reel = reportData.reels.find(r => r.reel_url === reelUrl || r.campaign_url === reelUrl);
+          let label = reelUrl;
+          
+          if (reel && reel.username) {
+            // 같은 계정이 여러 개인 경우 번호 추가
+            if (usernameCount[reel.username] > 1) {
+              usernameOccurrence[reel.username] = (usernameOccurrence[reel.username] || 0) + 1;
+              const suffix = String(usernameOccurrence[reel.username]).padStart(2, '0');
+              label = `@${reel.username}_${suffix}`;
+            } else {
+              label = `@${reel.username}`;
+            }
+          }
+          
+          // 날짜별 데이터 매핑 (없는 날짜는 null)
+          const dataMap: { [key: string]: number } = {};
+          chartInfo.labels.forEach((date: string, i: number) => {
+            // yyyy-mm-dd 형식으로 변환
+            const dateOnly = date.split(' ')[0];
+            // 같은 날짜의 여러 값이 있으면 합산
+            dataMap[dateOnly] = (dataMap[dateOnly] || 0) + chartInfo.data[i];
+          });
+          
+          const data = allDates.map(date => dataMap[date] || null);
+          
+          return {
+            label: label,
+            data: data,
+            borderColor: colors[index % colors.length],
+            backgroundColor: colors[index % colors.length].replace(')', ', 0.1)').replace('rgb', 'rgba'),
+            tension: 0.1,
+            spanGaps: true
+          };
+        });
+        
+        const unifiedChartData = {
+          labels: allDates,
+          datasets: datasets
+        };
+        
+        return (
+          <ChartSection>
+            <h2>릴스별 시간대별 조회수 추이</h2>
+            <Line data={unifiedChartData} options={chartOptions} />
+          </ChartSection>
+        );
+      })()}
 
       {reportData && (!reportData.reels || reportData.reels.length === 0) && !error && (
         <NoDataMessage>
-          <h3>📊 데이터 수집이 필요합니다</h3>
+          <h3>아직 데이터 수집이 필요합니다</h3>
           <p>이 캠페인에 대한 인스타그램 릴스 데이터가 아직 수집되지 않았습니다.<br/>
              관리자 페이지에서 데이터 수집을 진행하거나, 자동 수집이 완료될 때까지 기다려주세요.</p>
         </NoDataMessage>

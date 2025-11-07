@@ -20,10 +20,34 @@ const Header = styled.div`
   margin-bottom: 2rem;
 `;
 
-const TitleRow = styled.div`
+const TopControls = styled.div`
   display: flex;
   justify-content: space-between;
   align-items: center;
+  margin-bottom: 1.5rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+  background: white;
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+`;
+
+const ControlsLeft = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+`;
+
+const ControlsRight = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+`;
+
+const TitleRow = styled.div`
   margin-bottom: 1rem;
 `;
 
@@ -41,10 +65,27 @@ const CampaignSelector = styled.select`
 `;
 
 const CampaignInfo = styled.div`
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
   margin-bottom: 2rem;
+`;
+
+const InfoRow = styled.div`
+  display: grid;
+  gap: 0.8rem;
+  
+  &.top-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
+  &.bottom-row {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  
+  @media (max-width: 768px) {
+    grid-template-columns: 1fr !important;
+  }
 `;
 
 const InfoCard = styled.div`
@@ -189,7 +230,7 @@ const ShareButton = styled.button`
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
-  width: 100%;
+  white-space: nowrap;
   transition: background-color 0.2s;
 
   &:hover {
@@ -210,7 +251,7 @@ const PDFButton = styled.button`
   cursor: pointer;
   font-size: 0.9rem;
   font-weight: 600;
-  width: 100%;
+  white-space: nowrap;
   transition: background-color 0.2s;
 
   &:hover {
@@ -405,9 +446,8 @@ const BlogReport: React.FC = () => {
   if (!reportData || reportData.blogs.length === 0) {
     return (
       <Container>
-        <Header>
-          <TitleRow>
-            <Title>네이버 블로그 보고서</Title>
+        <TopControls>
+          <ControlsLeft>
             {!campaignName && (
               <CampaignSelector
                 value={selectedCampaign}
@@ -420,6 +460,11 @@ const BlogReport: React.FC = () => {
                 ))}
               </CampaignSelector>
             )}
+          </ControlsLeft>
+        </TopControls>
+        <Header>
+          <TitleRow>
+            <Title>네이버 블로그 보고서</Title>
           </TitleRow>
         </Header>
         <NoData>선택한 캠페인에 대한 블로그 데이터가 없습니다.</NoData>
@@ -429,9 +474,8 @@ const BlogReport: React.FC = () => {
 
   return (
     <Container id="report-content">
-      <Header>
-        <TitleRow>
-          <Title>네이버 블로그 보고서</Title>
+      <TopControls>
+        <ControlsLeft>
           {!campaignName && (
             <CampaignSelector
               value={selectedCampaign}
@@ -444,34 +488,10 @@ const BlogReport: React.FC = () => {
               ))}
             </CampaignSelector>
           )}
-        </TitleRow>
-
-        <CampaignInfo>
-          <InfoCard>
-            <InfoLabel>캠페인명</InfoLabel>
-            <InfoValue>{reportData.campaign.name}</InfoValue>
-          </InfoCard>
-          <InfoCard>
-            <InfoLabel>제품</InfoLabel>
-            <InfoValue>{reportData.campaign.product}</InfoValue>
-          </InfoCard>
-          <InfoCard>
-            <InfoLabel>기간</InfoLabel>
-            <InfoValue>
-              {new Date(reportData.campaign.start_date).toLocaleDateString()} ~{' '}
-              {new Date(reportData.campaign.end_date).toLocaleDateString()}
-            </InfoValue>
-          </InfoCard>
-          <InfoCard>
-            <InfoLabel>총 블로그 수</InfoLabel>
-            <InfoValue>{reportData.blogs.length}</InfoValue>
-          </InfoCard>
-          <InfoCard>
-            <InfoLabel>광고비</InfoLabel>
-            <InfoValue>{reportData.campaign.budget?.toLocaleString() || 0}원</InfoValue>
-          </InfoCard>
+        </ControlsLeft>
+        <ControlsRight>
           {!campaignName && (
-            <InfoCard style={{ display: pdfLoading ? 'none' : 'block' }}>
+            <>
               <ShareButton onClick={() => handleShare()}>
                 📤 보고서 공유
               </ShareButton>
@@ -481,8 +501,44 @@ const BlogReport: React.FC = () => {
               >
                 {pdfLoading ? '📄 PDF 생성 중...' : '📄 PDF 다운로드'}
               </PDFButton>
-            </InfoCard>
+            </>
           )}
+        </ControlsRight>
+      </TopControls>
+
+      <Header>
+        <TitleRow>
+          <Title>네이버 블로그 보고서</Title>
+        </TitleRow>
+
+        <CampaignInfo>
+          <InfoRow className="top-row">
+            <InfoCard>
+              <InfoLabel>캠페인명</InfoLabel>
+              <InfoValue>{reportData.campaign.name}</InfoValue>
+            </InfoCard>
+            <InfoCard>
+              <InfoLabel>제품</InfoLabel>
+              <InfoValue>{reportData.campaign.product}</InfoValue>
+            </InfoCard>
+            <InfoCard>
+              <InfoLabel>기간</InfoLabel>
+              <InfoValue>
+                {new Date(reportData.campaign.start_date).toLocaleDateString()} ~{' '}
+                {new Date(reportData.campaign.end_date).toLocaleDateString()}
+              </InfoValue>
+            </InfoCard>
+          </InfoRow>
+          <InfoRow className="bottom-row">
+            <InfoCard>
+              <InfoLabel>총 블로그 수</InfoLabel>
+              <InfoValue>{reportData.blogs.length}</InfoValue>
+            </InfoCard>
+            <InfoCard>
+              <InfoLabel>광고비</InfoLabel>
+              <InfoValue>{reportData.campaign.budget?.toLocaleString() || 0}원</InfoValue>
+            </InfoCard>
+          </InfoRow>
         </CampaignInfo>
       </Header>
 

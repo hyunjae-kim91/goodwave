@@ -1,12 +1,97 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from app.db.database import get_db
 from app.db import models
+from app.services.grade_service import instagram_grade_service
 
 router = APIRouter()
+
+
+def _calculate_influencer_grade(db: Session, username: str) -> Optional[str]:
+    """
+    사용자의 등급을 계산합니다.
+    24개 릴스의 평균 조회수 (최상 2개 + 최하위 2개 제외한 나머지 20개의 평균)로 계산
+    """
+    # 인플루언서 프로필 조회
+    profile = db.query(models.InfluencerProfile).filter(
+        models.InfluencerProfile.username == username
+    ).first()
+    
+    if not profile:
+        return None
+    
+    # 최대 24개 릴스의 조회수 조회
+    reels = db.query(models.InfluencerReel).filter(
+        models.InfluencerReel.profile_id == profile.id,
+        models.InfluencerReel.video_play_count.isnot(None)
+    ).order_by(models.InfluencerReel.created_at.desc()).limit(24).all()
+    
+    if not reels:
+        return None
+    
+    # 조회수 추출
+    view_counts = [reel.video_play_count for reel in reels if reel.video_play_count is not None and reel.video_play_count > 0]
+    
+    if len(view_counts) == 0:
+        return None
+    
+    # 최상위 2개, 최하위 2개 제외 (20개 이상일 때만)
+    if len(view_counts) > 4:
+        view_counts_sorted = sorted(view_counts)
+        trimmed_counts = view_counts_sorted[2:-2]  # 최하위 2개, 최상위 2개 제외
+    else:
+        trimmed_counts = view_counts
+    
+    if not trimmed_counts:
+        return None
+    
+    # 평균 계산
+    average_views = sum(trimmed_counts) / len(trimmed_counts)
+    
+    # instagram_grade_thresholds 테이블 기준으로 등급 반환
+    grade = instagram_grade_service.get_grade_for_average(db, average_views)
+    
+    return grade
+
+
+def _get_latest_reel_view_count(db: Session, reel_id: str, profile_id: int) -> int:
+    """
+    특정 릴스의 최신 조회수를 반환합니다.
+    """
+    reel = db.query(models.InfluencerReel).filter(
+        models.InfluencerReel.reel_id == reel_id,
+        models.InfluencerReel.profile_id == profile_id
+    ).order_by(models.InfluencerReel.created_at.desc()).first()
+    
+    if not reel:
+        return 0
+    
+    return reel.video_play_count or reel.views or 0
+
+
+def _extract_reel_ids_from_campaign_urls(campaign_urls: List[models.CampaignURL]) -> set:
+    """
+    캠페인 URL에서 릴스 ID들을 추출합니다.
+    """
+    reel_ids = set()
+    
+    for campaign_url in campaign_urls:
+        try:
+            url = campaign_url.url.strip().rstrip('/')
+            if '/reel/' in url:
+                # 릴스 URL에서 릴스 ID 추출
+                parts = url.split('/reel/')
+                if len(parts) > 1:
+                    reel_id = parts[1].split('/')[0].split('?')[0]
+                    reel_ids.add(reel_id)
+        except Exception:
+            continue
+    
+    return reel_ids
+
 
 @router.get("/instagram/posts/{campaign_name}")
 async def get_instagram_post_report(
@@ -125,12 +210,17 @@ async def get_instagram_reel_report(
             if reel.username:
                 campaign_usernames.add(reel.username)
         
-        # 캠페인 URL에서 추가 사용자명 추출
+        # 캠페인 URL 조회
         campaign_urls = db.query(models.CampaignURL).filter(
             models.CampaignURL.campaign_id == campaign.id,
             models.CampaignURL.channel.in_(['instagram_reel', 'instagram_post'])
         ).all()
         
+        # 캠페인 URL에서 릴스 ID 추출
+        campaign_reel_ids = _extract_reel_ids_from_campaign_urls(campaign_urls)
+        print(f"🎬 캠페인 URL에서 추출한 릴스 ID {len(campaign_reel_ids)}개: {list(campaign_reel_ids)[:5]}")
+        
+        # 캠페인 URL에서 추가 사용자명 추출
         for campaign_url in campaign_urls:
             try:
                 url = campaign_url.url.strip().rstrip('/')
@@ -169,9 +259,28 @@ async def get_instagram_reel_report(
                     
                     print(f"📱 '{influencer_profile.username}' 릴스 개수: {len(profile_reels)}")
                     
+                    # 사용자의 등급 계산 (24개 릴스 평균 조회수 기준)
+                    user_grade = _calculate_influencer_grade(db, username)
+                    print(f"🏆 '{username}' 등급: {user_grade}")
+                    
                     if profile_reels:
                         # 실제 릴스 데이터가 있는 경우
-                        for reel in profile_reels:
+                        # 캠페인 URL에 특정 릴스 ID가 있으면 그것만 포함, 없으면 모든 릴스 포함
+                        reels_to_include = []
+                        if campaign_reel_ids:
+                            # 특정 릴스 ID들이 지정된 경우
+                            reels_to_include = [r for r in profile_reels if r.reel_id in campaign_reel_ids]
+                            if not reels_to_include:
+                                # 지정된 릴스 ID가 없으면 모든 릴스 포함
+                                reels_to_include = profile_reels
+                        else:
+                            # 지정된 릴스 ID가 없으면 모든 릴스 포함
+                            reels_to_include = profile_reels
+                        
+                        for reel in reels_to_include:
+                            # 최신 조회수 조회
+                            latest_view_count = _get_latest_reel_view_count(db, reel.reel_id, influencer_profile.id)
+                            
                             reel_data = {
                                 'id': f"influencer_{reel.id}",
                                 'reel_id': reel.reel_id,
@@ -179,58 +288,45 @@ async def get_instagram_reel_report(
                                 'display_name': influencer_profile.full_name or influencer_profile.username,
                                 'follower_count': influencer_profile.followers or 0,
                                 's3_thumbnail_url': reel.media_urls[0] if reel.media_urls else None,
-                                'video_view_count': reel.views or reel.video_play_count or 0,
-                                'subscription_motivation': None,
-                                'category': None,
-                                'grade': 'A' if (influencer_profile.followers or 0) >= 100000 else 'B' if (influencer_profile.followers or 0) >= 10000 else 'C',
+                                'video_view_count': latest_view_count,
+                                'subscription_motivation': reel.subscription_motivation,
+                                'category': reel.category,
+                                'grade': user_grade or 'C',  # 등급 계산 결과 사용
                                 'product': campaign.product,
                                 'posted_at': reel.timestamp,
                                 'collection_date': reel.created_at,
-                                'campaign_url': f"https://www.instagram.com/{username}/",
+                                'campaign_url': f"https://www.instagram.com/reel/{reel.reel_id}/",
                                 'data_source': 'influencer'
                             }
                             influencer_reels.append(reel_data)
-                            print(f"📝 릴스 추가: {reel.reel_id} (조회수: {reel_data['video_view_count']})")
+                            print(f"📝 릴스 추가: {reel.reel_id} (조회수: {latest_view_count}, 등급: {user_grade})")
                     else:
-                        # 릴스가 아직 수집되지 않았지만 프로필은 있는 경우 - 플레이스홀더 생성
-                        placeholder_reel = {
-                            'id': f"influencer_profile_{influencer_profile.id}",
-                            'reel_id': f"profile_{influencer_profile.username}",
-                            'username': influencer_profile.username,
-                            'display_name': influencer_profile.full_name or influencer_profile.username,
-                            'follower_count': influencer_profile.followers or 0,
-                            's3_thumbnail_url': None,
-                            'video_view_count': 0,
-                            'subscription_motivation': None,
-                            'category': None,
-                            'grade': 'A' if (influencer_profile.followers or 0) >= 100000 else 'B' if (influencer_profile.followers or 0) >= 10000 else 'C',
-                            'product': campaign.product,
-                            'posted_at': influencer_profile.created_at,
-                            'collection_date': influencer_profile.created_at,
-                            'campaign_url': f"https://www.instagram.com/{username}/",
-                            'data_source': 'influencer_profile'  # 프로필만 있음을 표시
-                        }
-                        influencer_reels.append(placeholder_reel)
-                        print(f"📝 프로필 플레이스홀더 추가: {influencer_profile.username} (팔로워: {influencer_profile.followers or 0})")
+                        # 릴스가 아직 수집되지 않았지만 프로필은 있는 경우 - 스킵
+                        print(f"⚠️ '{username}' 프로필은 있지만 릴스 데이터가 없음 - 스킵")
                 else:
                     print(f"❌ 인플루언서 프로필을 찾을 수 없음: '{username}'")
             except Exception as e:
                 print(f"❌ 사용자명 처리 실패: {username} - {str(e)}")
                 continue
         
-        # 3. 데이터 우선순위 통합 (인플루언서 데이터 우선)
+        # 3. 데이터 우선순위 통합 (reel_id 기준 중복 제거, 인플루언서 데이터 우선)
         all_reels = []
         
         # 인플루언서 데이터를 우선으로 추가 (최신 데이터)
         all_reels.extend(influencer_reels)
         print(f"📊 인플루언서 데이터 추가됨: {len(influencer_reels)}개")
         
-        # 기존 캠페인 데이터는 인플루언서 데이터가 없는 경우에만 추가
-        campaign_usernames = {reel['username'] for reel in influencer_reels}
+        # 기존 캠페인 데이터는 reel_id가 중복되지 않는 경우에만 추가
+        added_reel_ids = {reel['reel_id'] for reel in influencer_reels if reel.get('reel_id')}
+        
         for reel in campaign_reels:
-            if reel.username not in campaign_usernames:
+            # reel_id가 이미 추가되지 않은 경우에만 추가
+            if reel.reel_id and reel.reel_id not in added_reel_ids:
+                # 등급 재계산
+                campaign_grade = _calculate_influencer_grade(db, reel.username) if reel.username else None
+                
                 all_reels.append({
-                    'id': reel.id,
+                    'id': f"campaign_{reel.id}",
                     'reel_id': reel.reel_id,
                     'username': reel.username,
                     'display_name': reel.display_name,
@@ -239,15 +335,17 @@ async def get_instagram_reel_report(
                     'video_view_count': reel.video_view_count,
                     'subscription_motivation': reel.subscription_motivation,
                     'category': reel.category,
-                    'grade': reel.grade,
+                    'grade': campaign_grade or reel.grade,  # 재계산된 등급 사용
                     'product': reel.product,
                     'posted_at': reel.posted_at,
                     'collection_date': reel.collection_date,
                     'campaign_url': reel.campaign_url,
                     'data_source': 'campaign'
                 })
+                added_reel_ids.add(reel.reel_id)
+                print(f"📝 캠페인 릴스 추가: {reel.reel_id} (등급: {campaign_grade or reel.grade})")
         
-        print(f"📈 총 릴스 데이터: {len(all_reels)}개 (인플루언서: {len(influencer_reels)}, 캠페인: {len(campaign_reels)})")
+        print(f"📈 총 릴스 데이터: {len(all_reels)}개 (인플루언서: {len(influencer_reels)}, 캠페인 추가: {len(campaign_reels)}, 실제 추가된 총: {len(all_reels)})")
         
         # 4. 날짜별 비디오 조회 수 집계 (통합 데이터)
         view_data = {}
@@ -270,11 +368,13 @@ async def get_instagram_reel_report(
             'data': [view_data[date] for date in sorted_dates]
         }
         
-        # 6. 고유 URL 개수 계산
-        unique_urls = set()
+        # 6. 고유 릴스 개수 계산 (reel_id 기준)
+        unique_reel_ids = set()
         for reel in all_reels:
-            if reel.get('campaign_url'):
-                unique_urls.add(reel['campaign_url'])
+            if reel.get('reel_id'):
+                unique_reel_ids.add(reel['reel_id'])
+        
+        print(f"🎯 고유 릴스 개수: {len(unique_reel_ids)}개")
         
         return {
             'campaign': {
@@ -284,7 +384,7 @@ async def get_instagram_reel_report(
                 'product': campaign.product,
                 'budget': campaign.budget
             },
-            'unique_reel_count': len(unique_urls),
+            'unique_reel_count': len(unique_reel_ids),  # reel_id 기준으로 계산
             'total_reels': len(all_reels),
             'campaign_reels': len(campaign_reels),
             'influencer_reels': len(influencer_reels),

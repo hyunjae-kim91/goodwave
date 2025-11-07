@@ -69,6 +69,7 @@ export interface InstagramPost {
 export interface InstagramReel {
   id: number;
   reel_id: string;
+  reel_url?: string;
   username: string;
   display_name: string;
   follower_count: number;
@@ -77,11 +78,13 @@ export interface InstagramReel {
   subscription_motivation: string;
   category: string;
   grade: string;
+  grade_avg_views?: number;
   posted_at: string;
   collected_at: string;
   product?: string;
   collection_date?: string;
   campaign_url?: string;
+  view_history?: Array<{ date: string; views: number }>;
 }
 
 export interface BlogPost {
@@ -119,6 +122,12 @@ export interface InstagramPostReport extends ReportData {
 export interface InstagramReelReport extends ReportData {
   unique_reel_count?: number;
   reels: InstagramReel[];
+  chart_data_by_reel?: {
+    [reelUrl: string]: {
+      labels: string[];
+      data: number[];
+    };
+  };
 }
 
 export interface BlogReport extends ReportData {

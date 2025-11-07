@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
+import { useNavigate } from 'react-router-dom';
 import { campaignsApi } from '../services/api';
 import { Campaign, CampaignCreate, CampaignUpdate, CampaignURLCreate, CampaignURLUpdatePayload } from '../types';
 
 const CAMPAIGN_TYPE_OPTIONS = [
-  { value: 'instagram_post', label: '인스타그램 캠페인' },
+  { value: 'instagram_reel', label: '인스타그램 릴스' },
   { value: 'blog', label: '네이버 블로그' }
 ] as const;
 
@@ -267,7 +268,27 @@ const EditButtonGroup = styled.div`
   flex-wrap: wrap;
 `;
 
+const SectionTitle = styled.h2<{ clickable?: boolean }>`
+  cursor: ${props => props.clickable ? 'pointer' : 'default'};
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #2c3e50;
+  margin: 0 0 1.5rem 0;
+  
+  &:hover {
+    ${props => props.clickable && `color: #3498db;`}
+  }
+`;
+
+const ToggleIcon = styled.span`
+  font-size: 0.8rem;
+  transition: transform 0.2s;
+`;
+
 const CampaignManagement: React.FC = () => {
+  const navigate = useNavigate();
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState<CampaignCreate>({
@@ -282,6 +303,8 @@ const CampaignManagement: React.FC = () => {
   const [editingCampaignId, setEditingCampaignId] = useState<number | null>(null);
   const [editForm, setEditForm] = useState<EditFormState | null>(null);
   const [updatingCampaignId, setUpdatingCampaignId] = useState<number | null>(null);
+  const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
+  const [createFormExpanded, setCreateFormExpanded] = useState(false);
 
   useEffect(() => {
     fetchCampaigns();
@@ -483,8 +506,7 @@ const CampaignManagement: React.FC = () => {
         end_date: formData.end_date ? formData.end_date + 'T23:59:59' : ''
       };
       
-      await campaignsApi.create(formattedData);
-      await fetchCampaigns();
+      const createdCampaign = await campaignsApi.create(formattedData);
       
       // Reset form
       setFormData({
@@ -497,7 +519,18 @@ const CampaignManagement: React.FC = () => {
         urls: [{ url: '', channel: CAMPAIGN_TYPE_OPTIONS[0].value }]
       });
       
-      alert('캠페인이 성공적으로 생성되었습니다.');
+      // 릴스 URL이 포함된 경우 수집 상태 페이지로 이동
+      const hasReelUrls = formattedData.urls.some(url => 
+        url.channel === 'instagram_reel' && url.url.includes('instagram.com/reel/')
+      );
+      
+      if (hasReelUrls) {
+        alert(`캠페인이 성공적으로 생성되었습니다.\n릴스 수집이 시작됩니다. 수집 상태 페이지로 이동합니다.`);
+        navigate('/admin/campaign-collection-status');
+      } else {
+        alert('캠페인이 성공적으로 생성되었습니다.');
+        await fetchCampaigns();
+      }
     } catch (error: any) {
       console.error('Error creating campaign:', error);
       const errorMessage = error.response?.data?.detail || error.message || '캠페인 생성에 실패했습니다.';
@@ -527,124 +560,34 @@ const CampaignManagement: React.FC = () => {
     <Container>
       <Title>캠페인 관리</Title>
       
-      <FormSection>
-        <h2>새 캠페인 생성</h2>
-        <form onSubmit={handleSubmit}>
-          <FormGrid>
-            <FormGroup>
-              <Label>캠페인 이름</Label>
-              <Input
-                type="text"
-                value={formData.name}
-                onChange={(e) => handleInputChange('name', e.target.value)}
-                required
-              />
-            </FormGroup>
-            
-            <FormGroup>
-              <Label>캠페인 유형</Label>
-                <Select
-                  value={formData.campaign_type}
-                  onChange={(e) => handleInputChange('campaign_type', e.target.value)}
-                  required
-                >
-                  {CAMPAIGN_TYPE_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-            </FormGroup>
-            
-            <FormGroup>
-              <Label>광고비 (원)</Label>
-              <Input
-                type="number"
-                value={formData.budget}
-                onChange={(e) => handleInputChange('budget', parseFloat(e.target.value))}
-                required
-              />
-            </FormGroup>
-            
-            <FormGroup>
-              <Label>제품명</Label>
-              <Input
-                type="text"
-                value={formData.product}
-                onChange={(e) => handleInputChange('product', e.target.value)}
-                required
-              />
-            </FormGroup>
-            
-            <FormGroup>
-              <Label>시작날짜</Label>
-              <Input
-                type="date"
-                value={formData.start_date}
-                onChange={(e) => handleInputChange('start_date', e.target.value)}
-                required
-              />
-            </FormGroup>
-            
-            <FormGroup>
-              <Label>종료날짜</Label>
-              <Input
-                type="date"
-                value={formData.end_date}
-                onChange={(e) => handleInputChange('end_date', e.target.value)}
-                required
-              />
-            </FormGroup>
-          </FormGrid>
-          
-          <URLSection>
-            <h3>캠페인 URL</h3>
-            {(formData.urls || []).map((urlItem, index) => (
-              <URLItem key={index}>
-                <Input
-                  type="url"
-                  placeholder="URL을 입력하세요"
-                  value={urlItem.url}
-                  onChange={(e) => handleURLChange(index, 'url', e.target.value)}
-                  required
-                />
-                <Select
-                  value={urlItem.channel}
-                  onChange={(e) => handleURLChange(index, 'channel', e.target.value)}
-                >
-                  {CAMPAIGN_TYPE_OPTIONS.map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </Select>
-                <DangerButton
-                  type="button"
-                  onClick={() => removeURLField(index)}
-                  disabled={formData.urls.length === 1}
-                >
-                  삭제
-                </DangerButton>
-              </URLItem>
-            ))}
-            <SecondaryButton type="button" onClick={addURLField}>
-              URL 추가
-            </SecondaryButton>
-          </URLSection>
-          
-          <Button type="submit" disabled={loading}>
-            {loading ? '생성 중...' : '캠페인 생성'}
-          </Button>
-        </form>
-      </FormSection>
-      
       <CampaignList>
-        <h2>등록된 캠페인</h2>
-        {(campaigns || []).map(campaign => (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
+          <h2 style={{ margin: 0 }}>등록된 캠페인</h2>
+          <Select 
+            value={selectedCampaignId || ''} 
+            onChange={(e) => setSelectedCampaignId(e.target.value ? Number(e.target.value) : null)}
+            style={{ width: 'auto', minWidth: '300px' }}
+          >
+            <option value="">캠페인을 선택하세요</option>
+            {(campaigns || []).map(campaign => (
+              <option key={campaign.id} value={campaign.id}>
+                {campaign.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+        {selectedCampaignId && (campaigns || []).filter(campaign => campaign.id === selectedCampaignId).map(campaign => (
           <CampaignCard key={campaign.id}>
             <CampaignHeader>
               <CampaignTitle>{campaign.name}</CampaignTitle>
               <ActionButtons>
+                <Button
+                  type="button"
+                  onClick={() => navigate('/admin/campaign-collection-status')}
+                  style={{ backgroundColor: '#27ae60' }}
+                >
+                  📊 수집 상태 보기
+                </Button>
                 <SecondaryButton
                   type="button"
                   onClick={() => startEditingCampaign(campaign)}
@@ -664,17 +607,18 @@ const CampaignManagement: React.FC = () => {
             <CampaignInfo>
               <InfoItem><strong>유형:</strong> {CAMPAIGN_TYPE_LABELS[campaign.campaign_type] || campaign.campaign_type}</InfoItem>
               <InfoItem><strong>예산:</strong> {campaign.budget.toLocaleString()}원</InfoItem>
-              <InfoItem><strong>제품:</strong> {campaign.product}</InfoItem>
               <InfoItem><strong>기간:</strong> {new Date(campaign.start_date).toLocaleDateString()} ~ {new Date(campaign.end_date).toLocaleDateString()}</InfoItem>
             </CampaignInfo>
+            <CampaignURLSection>
+              <URLSectionTitle>제품명: {campaign.product}</URLSectionTitle>
+            </CampaignURLSection>
             {(campaign.campaign_urls || []).length > 0 && (
               <CampaignURLSection>
-                <URLSectionTitle>캠페인 URL</URLSectionTitle>
+                <URLSectionTitle>캠페인 URL ({(campaign.campaign_urls || []).length}개)</URLSectionTitle>
                 <URLList>
                   {(campaign.campaign_urls || []).map(url => (
                     <URLListItem key={url.id}>
                       <span>{url.url}</span>
-                      <URLChannel>{CAMPAIGN_TYPE_LABELS[url.channel] || url.channel}</URLChannel>
                     </URLListItem>
                   ))}
                 </URLList>
@@ -728,7 +672,6 @@ const CampaignManagement: React.FC = () => {
                           onChange={(e) => handleEditUrlChange(index, e.target.value)}
                           required
                         />
-                        <URLChannel>{CAMPAIGN_TYPE_LABELS[urlItem.channel] || urlItem.channel}</URLChannel>
                       </EditURLItem>
                     ))}
                   </EditURLSection>
@@ -754,6 +697,113 @@ const CampaignManagement: React.FC = () => {
           </CampaignCard>
         ))}
       </CampaignList>
+      
+      <FormSection>
+        <SectionTitle clickable onClick={() => setCreateFormExpanded(!createFormExpanded)}>
+          <ToggleIcon>{createFormExpanded ? '▼' : '▶'}</ToggleIcon>
+          새 캠페인 생성
+        </SectionTitle>
+        {createFormExpanded && (
+          <form onSubmit={handleSubmit}>
+            <FormGrid>
+              <FormGroup>
+                <Label>캠페인 이름</Label>
+                <Input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => handleInputChange('name', e.target.value)}
+                  required
+                />
+              </FormGroup>
+              
+              <FormGroup>
+                <Label>캠페인 유형</Label>
+                  <Select
+                    value={formData.campaign_type}
+                    onChange={(e) => handleInputChange('campaign_type', e.target.value)}
+                    required
+                  >
+                    {CAMPAIGN_TYPE_OPTIONS.map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+              </FormGroup>
+              
+              <FormGroup>
+                <Label>광고비 (원)</Label>
+                <Input
+                  type="number"
+                  value={formData.budget}
+                  onChange={(e) => handleInputChange('budget', parseFloat(e.target.value))}
+                  required
+                />
+              </FormGroup>
+              
+              <FormGroup>
+                <Label>제품명</Label>
+                <Input
+                  type="text"
+                  value={formData.product}
+                  onChange={(e) => handleInputChange('product', e.target.value)}
+                  required
+                />
+              </FormGroup>
+              
+              <FormGroup>
+                <Label>시작날짜</Label>
+                <Input
+                  type="date"
+                  value={formData.start_date}
+                  onChange={(e) => handleInputChange('start_date', e.target.value)}
+                  required
+                />
+              </FormGroup>
+              
+              <FormGroup>
+                <Label>종료날짜</Label>
+                <Input
+                  type="date"
+                  value={formData.end_date}
+                  onChange={(e) => handleInputChange('end_date', e.target.value)}
+                  required
+                />
+              </FormGroup>
+            </FormGrid>
+            
+            <URLSection>
+              <h3>캠페인 URL</h3>
+              {(formData.urls || []).map((urlItem, index) => (
+                <URLItem key={index}>
+                  <Input
+                    type="url"
+                    placeholder="URL을 입력하세요"
+                    value={urlItem.url}
+                    onChange={(e) => handleURLChange(index, 'url', e.target.value)}
+                    required
+                    style={{ gridColumn: '1 / 3' }}
+                  />
+                  <DangerButton
+                    type="button"
+                    onClick={() => removeURLField(index)}
+                    disabled={formData.urls.length === 1}
+                  >
+                    삭제
+                  </DangerButton>
+                </URLItem>
+              ))}
+              <SecondaryButton type="button" onClick={addURLField}>
+                URL 추가
+              </SecondaryButton>
+            </URLSection>
+            
+            <Button type="submit" disabled={loading}>
+              {loading ? '생성 중...' : '캠페인 생성'}
+            </Button>
+          </form>
+        )}
+      </FormSection>
     </Container>
   );
 };

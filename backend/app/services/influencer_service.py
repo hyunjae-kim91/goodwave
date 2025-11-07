@@ -3,6 +3,7 @@ import json
 from typing import List, Dict, Any, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime, timedelta
 
 from ..db.database import get_db
@@ -12,6 +13,7 @@ from ..db.models import (
 )
 from ..models.influencer_models import Profile, Post
 from .s3_service import S3Service
+from ..utils.sequence_fixer import safe_db_operation
 
 logger = logging.getLogger(__name__)
 
@@ -347,39 +349,49 @@ class InfluencerService:
         prompt_used: str | None = None,
         reel_id: int | None = None,
     ) -> InfluencerAnalysis:
-        """분석 결과 저장"""
-        query = self.db.query(InfluencerAnalysis).filter(
-            InfluencerAnalysis.profile_id == profile_id,
-            InfluencerAnalysis.analysis_type == analysis_type
-        )
-
-        if reel_id is not None:
-            query = query.filter(InfluencerAnalysis.reel_id == reel_id)
-        else:
-            query = query.filter(InfluencerAnalysis.reel_id.is_(None))
-
-        existing_analysis = query.first()
+        """분석 결과 저장 (UniqueViolation 자동 복구 기능 포함)"""
         
-        if existing_analysis:
-            existing_analysis.analysis_result = analysis_result
-            existing_analysis.prompt_used = prompt_used
-            existing_analysis.created_at = now_kst()
-            existing_analysis.reel_id = reel_id
-            self.db.commit()
-            self.db.refresh(existing_analysis)
-            return existing_analysis
-        else:
-            db_analysis = InfluencerAnalysis(
-                profile_id=profile_id,
-                analysis_type=analysis_type,
-                reel_id=reel_id,
-                analysis_result=analysis_result,
-                prompt_used=prompt_used
+        def _save_operation():
+            query = self.db.query(InfluencerAnalysis).filter(
+                InfluencerAnalysis.profile_id == profile_id,
+                InfluencerAnalysis.analysis_type == analysis_type
             )
-            self.db.add(db_analysis)
-            self.db.commit()
-            self.db.refresh(db_analysis)
-            return db_analysis
+
+            if reel_id is not None:
+                query = query.filter(InfluencerAnalysis.reel_id == reel_id)
+            else:
+                query = query.filter(InfluencerAnalysis.reel_id.is_(None))
+
+            existing_analysis = query.first()
+            
+            if existing_analysis:
+                existing_analysis.analysis_result = analysis_result
+                existing_analysis.prompt_used = prompt_used
+                existing_analysis.created_at = now_kst()
+                existing_analysis.reel_id = reel_id
+                self.db.commit()
+                self.db.refresh(existing_analysis)
+                return existing_analysis
+            else:
+                db_analysis = InfluencerAnalysis(
+                    profile_id=profile_id,
+                    analysis_type=analysis_type,
+                    reel_id=reel_id,
+                    analysis_result=analysis_result,
+                    prompt_used=prompt_used
+                )
+                self.db.add(db_analysis)
+                self.db.commit()
+                self.db.refresh(db_analysis)
+                return db_analysis
+        
+        # UniqueViolation 발생 시 자동으로 시퀀스 리셋 후 재시도
+        return safe_db_operation(
+            self.db,
+            _save_operation,
+            'influencer_analysis',
+            max_retries=2
+        )
     
     def get_analysis_result(self, profile_id: int, analysis_type: str) -> Optional[InfluencerAnalysis]:
         """분석 결과 조회"""
