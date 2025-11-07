@@ -486,6 +486,9 @@ const InstagramReelReport: React.FC = () => {
 
     setPdfLoading(true);
     
+    // DOM 업데이트를 위해 잠시 대기
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
     try {
       const reportElement = document.getElementById('report-content');
       if (!reportElement) {
@@ -493,83 +496,23 @@ const InstagramReelReport: React.FC = () => {
         return;
       }
 
-      // TopControls 숨기기 (드롭박스가 있는 상단 컨트롤)
-      const topControls = reportElement.firstElementChild as HTMLElement;
-      const originalTopControlsDisplay = topControls?.style.display;
-      const originalTopControlsVisibility = topControls?.style.visibility;
-      
-      // TopControls가 첫 번째 자식인지 확인
-      if (topControls && topControls.textContent?.includes('보고서 공유')) {
-        topControls.style.display = 'none';
-        topControls.style.visibility = 'hidden';
+      // 버튼 컨테이너를 강제로 숨기기
+      const buttonContainer = reportElement.querySelector('[style*="display: none"]');
+      if (buttonContainer) {
+        (buttonContainer as HTMLElement).style.display = 'none !important';
+        (buttonContainer as HTMLElement).style.visibility = 'hidden';
       }
 
-      // 모든 이미지가 로드될 때까지 대기
-      const images = reportElement.querySelectorAll('img');
-      const imagePromises = Array.from(images).map((img) => {
-        return new Promise<void>((resolve) => {
-          // 이미 로드된 경우
-          if (img.complete && img.naturalHeight !== 0) {
-            resolve();
-            return;
-          }
-          
-          // 이미지 로드 대기
-          const loadHandler = () => {
-            img.removeEventListener('load', loadHandler);
-            img.removeEventListener('error', errorHandler);
-            resolve();
-          };
-          
-          const errorHandler = () => {
-            img.removeEventListener('load', loadHandler);
-            img.removeEventListener('error', errorHandler);
-            resolve(); // 에러가 나도 계속 진행
-          };
-          
-          img.addEventListener('load', loadHandler);
-          img.addEventListener('error', errorHandler);
-          
-          // 타임아웃 설정 (10초)
-          setTimeout(() => {
-            img.removeEventListener('load', loadHandler);
-            img.removeEventListener('error', errorHandler);
-            resolve();
-          }, 10000);
-        });
-      });
-      await Promise.all(imagePromises);
-
-      // DOM 업데이트를 위해 추가 대기
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // html2canvas로 페이지를 이미지로 변환 (TopControls 제외)
+      // html2canvas로 페이지를 이미지로 변환
       const canvas = await html2canvas(reportElement, {
-        scale: 2,
+        scale: 1.5,
         useCORS: true,
-        allowTaint: true, // 이미지 로딩을 위해 true로 변경
+        allowTaint: false,
         backgroundColor: '#ffffff',
-        logging: false,
-        imageTimeout: 15000,
-        ignoreElements: (element) => {
-          // TopControls 제외
-          return element === topControls || element.closest('[class*="TopControls"]') !== null;
-        },
-        onclone: (clonedDoc) => {
-          // 복제된 문서에서도 TopControls 숨기기
-          const clonedTopControls = clonedDoc.querySelector('[class*="TopControls"]') as HTMLElement;
-          if (clonedTopControls) {
-            clonedTopControls.style.display = 'none';
-            clonedTopControls.style.visibility = 'hidden';
-          }
-        }
+        scrollY: -window.scrollY,
+        windowWidth: 1200,
+        windowHeight: Math.max(reportElement.scrollHeight + 100, 1000)
       });
-
-      // TopControls 복원
-      if (topControls) {
-        topControls.style.display = originalTopControlsDisplay || '';
-        topControls.style.visibility = originalTopControlsVisibility || '';
-      }
 
       // PDF 생성
       const pdf = new jsPDF('p', 'mm', 'a4');
