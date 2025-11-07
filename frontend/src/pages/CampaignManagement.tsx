@@ -15,6 +15,7 @@ const CAMPAIGN_TYPE_LABELS = CAMPAIGN_TYPE_OPTIONS.reduce<Record<string, string>
   return acc;
 }, {
   instagram_reel: '인스타그램 릴스',
+  instagram_post: '인스타그램 포스트', // 기존 데이터 표시용
   all: '전체',
 });
 
@@ -336,12 +337,19 @@ const CampaignManagement: React.FC = () => {
     }
 
     setEditingCampaignId(campaign.id);
+    
+    // 유효한 캠페인 유형인지 확인 (드롭다운에 없는 경우 기본값 사용)
+    const validCampaignTypes: string[] = ['instagram_reel', 'blog', 'all'];
+    const campaignType = campaign.campaign_type && validCampaignTypes.includes(campaign.campaign_type)
+      ? campaign.campaign_type
+      : 'instagram_reel';
+    
     setEditForm({
       budget: campaign.budget !== undefined ? String(campaign.budget) : '',
       product: campaign.product || '',
       startDate: toDateInputValue(campaign.start_date),
       endDate: toDateInputValue(campaign.end_date),
-      campaignType: campaign.campaign_type || 'instagram_reel',
+      campaignType: campaignType,
       urls: (campaign.campaign_urls || []).map(url => ({
         id: url.id,
         url: url.url,
