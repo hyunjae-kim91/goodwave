@@ -114,6 +114,10 @@ const InfoRow = styled.div`
     grid-template-columns: repeat(4, 1fr);
   }
   
+  &.top-accounts-row {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  
   @media (max-width: 768px) {
     grid-template-columns: 1fr !important;
   }
@@ -124,6 +128,10 @@ const InfoCard = styled.div`
   padding: 0.8rem;
   border-radius: 4px;
   text-align: center;
+`;
+
+const TopAccountsInfoCard = styled(InfoCard)`
+  padding: 0.6rem;
 `;
 
 const InfoLabel = styled.div`
@@ -754,6 +762,71 @@ const InstagramReelReport: React.FC = () => {
                   <InfoValue>{cpv.toFixed(2)}원</InfoValue>
                 </InfoCard>
               </InfoRow>
+              <InfoRow className="top-accounts-row">
+                {(() => {
+                  // 최대 조회 계정 찾기
+                  const maxViewReel = reportData.reels.reduce((max, reel) => 
+                    (reel.video_view_count || 0) > (max.video_view_count || 0) ? reel : max
+                  , reportData.reels[0]);
+                  
+                  // 최대 좋아요 계정 찾기
+                  const maxLikeReel = reportData.reels.reduce((max, reel) => 
+                    (reel.likes_count || 0) > (max.likes_count || 0) ? reel : max
+                  , reportData.reels[0]);
+                  
+                  // 최대 댓글 계정 찾기
+                  const maxCommentReel = reportData.reels.reduce((max, reel) => 
+                    (reel.comments_count || 0) > (max.comments_count || 0) ? reel : max
+                  , reportData.reels[0]);
+                  
+                  return (
+                    <>
+                      <TopAccountsInfoCard>
+                        <InfoLabel>최대 조회 계정</InfoLabel>
+                        <InfoValue>
+                          <div style={{ fontSize: '0.8rem', marginBottom: '2px' }}>
+                            @{maxViewReel.username}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '2px' }}>
+                            {maxViewReel.display_name || maxViewReel.username}
+                          </div>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#3498db' }}>
+                            {maxViewReel.video_view_count?.toLocaleString() || 0}회
+                          </div>
+                        </InfoValue>
+                      </TopAccountsInfoCard>
+                      <TopAccountsInfoCard>
+                        <InfoLabel>최대 좋아요 계정</InfoLabel>
+                        <InfoValue>
+                          <div style={{ fontSize: '0.8rem', marginBottom: '2px' }}>
+                            @{maxLikeReel.username}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '2px' }}>
+                            {maxLikeReel.display_name || maxLikeReel.username}
+                          </div>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#e74c3c' }}>
+                            {maxLikeReel.likes_count?.toLocaleString() || 0}개
+                          </div>
+                        </InfoValue>
+                      </TopAccountsInfoCard>
+                      <TopAccountsInfoCard>
+                        <InfoLabel>최대 댓글 계정</InfoLabel>
+                        <InfoValue>
+                          <div style={{ fontSize: '0.8rem', marginBottom: '2px' }}>
+                            @{maxCommentReel.username}
+                          </div>
+                          <div style={{ fontSize: '0.75rem', color: '#666', marginBottom: '2px' }}>
+                            {maxCommentReel.display_name || maxCommentReel.username}
+                          </div>
+                          <div style={{ fontSize: '0.95rem', fontWeight: 'bold', color: '#27ae60' }}>
+                            {maxCommentReel.comments_count?.toLocaleString() || 0}개
+                          </div>
+                        </InfoValue>
+                      </TopAccountsInfoCard>
+                    </>
+                  );
+                })()}
+              </InfoRow>
             </CampaignInfo>
           );
         })()}
@@ -771,6 +844,8 @@ const InstagramReelReport: React.FC = () => {
                 <HeaderCell className="image-column">이미지</HeaderCell>
                 <HeaderCell className="user-column">사용자</HeaderCell>
                 <HeaderCell className="view-column">조회수</HeaderCell>
+                <HeaderCell className="meta-column">좋아요</HeaderCell>
+                <HeaderCell className="meta-column">댓글</HeaderCell>
                 <HeaderCell className="meta-column">구독 동기</HeaderCell>
                 <HeaderCell className="meta-column">카테고리</HeaderCell>
                 <HeaderCell className="meta-column">등록일</HeaderCell>
@@ -813,7 +888,13 @@ const InstagramReelReport: React.FC = () => {
                         <ViewCount>{reel.video_view_count.toLocaleString()}</ViewCount>
                       </TableCell>
                       <TableCell>
-                        <MetaInfo>{getAnalysisValue(reel.subscription_motivation)}</MetaInfo>
+                        <MetaInfo>{reel.likes_count ? reel.likes_count.toLocaleString() : 'N/A'}</MetaInfo>
+                      </TableCell>
+                      <TableCell>
+                        <MetaInfo>{reel.comments_count ? reel.comments_count.toLocaleString() : 'N/A'}</MetaInfo>
+                      </TableCell>
+                      <TableCell>
+                        <MetaInfo>{getAnalysisValue(reel.account_subscription_motivation || reel.subscription_motivation)}</MetaInfo>
                       </TableCell>
                       <TableCell>
                         <MetaInfo>{getAnalysisValue(reel.category)}</MetaInfo>

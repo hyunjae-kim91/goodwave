@@ -1,12 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+from datetime import datetime, timedelta, time
 
 from app.db.database import get_db
 from app.db import models
 from app.services.campaign_reel_collection_service import CampaignReelCollectionService
 from app.services.collection_worker import stop_collection_worker, get_worker_status
 from app.utils.sequence_fixer import fix_all_sequences, fix_table_sequence
+
+KST_OFFSET = timedelta(hours=9)
+
+def now_kst() -> datetime:
+    """한국 시간(KST) 기준 현재 시간 반환"""
+    return datetime.utcnow() + KST_OFFSET
 
 router = APIRouter()
 
@@ -122,6 +129,8 @@ async def get_campaign_collection_status(db: Session = Depends(get_db)):
                 status["campaign_name"] = campaign.name
                 status["campaign_type"] = campaign.campaign_type
                 status["product"] = campaign.product
+                status["start_date"] = campaign.start_date.isoformat() if campaign.start_date else None
+                status["end_date"] = campaign.end_date.isoformat() if campaign.end_date else None
         
         return {
             "campaigns": all_status,
@@ -155,6 +164,8 @@ async def get_single_campaign_collection_status(campaign_id: int, db: Session = 
             status["campaign_name"] = campaign.name
             status["campaign_type"] = campaign.campaign_type
             status["product"] = campaign.product
+            status["start_date"] = campaign.start_date.isoformat() if campaign.start_date else None
+            status["end_date"] = campaign.end_date.isoformat() if campaign.end_date else None
         
         return status
         
@@ -162,6 +173,147 @@ async def get_single_campaign_collection_status(campaign_id: int, db: Session = 
         raise
     except Exception as e:
         print(f"Error getting campaign collection status for {campaign_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/check-today-collection/{campaign_id}")
+async def check_today_collection(campaign_id: int, db: Session = Depends(get_db)):
+    """오늘 날짜에 해당 캠페인의 릴스 데이터가 수집되었는지 확인"""
+    try:
+        # 캠페인 존재 확인
+        campaign = db.query(models.Campaign).filter(models.Campaign.id == campaign_id).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        # 오늘 날짜 (한국 시간 기준)
+        today = now_kst().date()
+        today_start = datetime.combine(today, time.min)
+        today_end = datetime.combine(today + timedelta(days=1), time.min)
+        
+        # 오늘 날짜에 완료일시가 오늘인 완료된 작업 확인 (CampaignReelCollectionJob 테이블)
+        today_completed_jobs = db.query(models.CampaignReelCollectionJob).filter(
+            models.CampaignReelCollectionJob.campaign_id == campaign_id,
+            models.CampaignReelCollectionJob.status == 'completed',
+            models.CampaignReelCollectionJob.completed_at >= today_start,
+            models.CampaignReelCollectionJob.completed_at < today_end
+        ).count()
+        
+        return {
+            "has_today_data": today_completed_jobs > 0,
+            "today_count": today_completed_jobs,
+            "today_date": today.isoformat()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error checking today collection for {campaign_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/immediate-collection/{campaign_id}")
+async def immediate_collection(campaign_id: int, db: Session = Depends(get_db)):
+    """캠페인 릴스 정보 즉시 수집"""
+    try:
+        # 캠페인 존재 확인
+        campaign = db.query(models.Campaign).filter(models.Campaign.id == campaign_id).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        # 오늘 날짜에 완료일시가 오늘인 완료된 작업이 있는지 확인
+        today = now_kst().date()
+        today_start = datetime.combine(today, time.min)
+        today_end = datetime.combine(today + timedelta(days=1), time.min)
+        
+        today_completed_jobs = db.query(models.CampaignReelCollectionJob).filter(
+            models.CampaignReelCollectionJob.campaign_id == campaign_id,
+            models.CampaignReelCollectionJob.status == 'completed',
+            models.CampaignReelCollectionJob.completed_at >= today_start,
+            models.CampaignReelCollectionJob.completed_at < today_end
+        ).count()
+        
+        if today_completed_jobs > 0:
+            return {
+                "message": f"오늘({today.isoformat()}) 완료일시가 오늘인 완료된 작업이 {today_completed_jobs}개 있습니다. 큐에 추가하지 않습니다.",
+                "has_today_data": True,
+                "today_count": today_completed_jobs,
+                "skipped": True
+            }
+        
+        # 스케줄러 서비스를 통한 즉시 수집
+        from app.services.scheduler_service import SchedulerService
+        scheduler = SchedulerService()
+        
+        # 캠페인의 활성 스케줄들 가져오기
+        schedules = db.query(models.CollectionSchedule).filter(
+            models.CollectionSchedule.campaign_id == campaign_id,
+            models.CollectionSchedule.is_active == True
+        ).all()
+        
+        if not schedules:
+            return {
+                "message": "활성화된 수집 스케줄이 없습니다.",
+                "has_today_data": False,
+                "today_count": 0,
+                "skipped": False
+            }
+        
+        # 각 스케줄 처리 (릴스만) - 큐에만 추가하고 실행은 워커가 처리
+        processed_count = 0
+        jobs_created = 0
+        
+        from app.services.campaign_reel_collection_service import CampaignReelCollectionService
+        collection_service = CampaignReelCollectionService()
+        
+        for schedule in schedules:
+            if schedule.channel in ['instagram_reel', 'instagram_post']:
+                try:
+                    # 특정 릴스 URL인 경우 작업을 큐에만 추가 (실행은 워커가 처리)
+                    if "/reel/" in schedule.campaign_url:
+                        jobs = collection_service.add_reel_collection_jobs(
+                            campaign_id=campaign.id,
+                            reel_urls=[schedule.campaign_url],
+                            check_existing_data=False  # 즉시 수집이므로 기존 데이터 체크 안 함
+                        )
+                        jobs_created += len(jobs)
+                        print(f"📋 {len(jobs)}개 작업을 큐에 추가: {schedule.campaign_url}")
+                        # 작업은 큐에만 추가하고, 실행은 워커가 하나씩 처리하도록 함
+                    else:
+                        # 사용자 프로필 URL인 경우, 스케줄러를 통해 처리
+                        # 하지만 오늘 날짜 체크를 우회하기 위해 직접 처리
+                        await scheduler._collect_campaign_instagram_reels(schedule, campaign, now_kst())
+                    
+                    processed_count += 1
+                except Exception as e:
+                    print(f"스케줄 처리 실패 {schedule.campaign_url}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    continue
+        
+        # 생성된 작업 수 확인
+        total_pending_jobs = db.query(models.CampaignReelCollectionJob).filter(
+            models.CampaignReelCollectionJob.campaign_id == campaign_id,
+            models.CampaignReelCollectionJob.status == "pending"
+        ).count()
+        
+        total_processing_jobs = db.query(models.CampaignReelCollectionJob).filter(
+            models.CampaignReelCollectionJob.campaign_id == campaign_id,
+            models.CampaignReelCollectionJob.status == "processing"
+        ).count()
+        
+        return {
+            "message": f"{jobs_created}개의 작업이 큐에 추가되었습니다. 워커가 하나씩 처리합니다. (대기 중: {total_pending_jobs}개, 처리 중: {total_processing_jobs}개)",
+            "has_today_data": False,
+            "today_count": 0,
+            "skipped": False,
+            "processed_schedules": processed_count,
+            "jobs_created": jobs_created,
+            "pending_jobs": total_pending_jobs,
+            "processing_jobs": total_processing_jobs
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error in immediate collection for {campaign_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/process-reel-collection-jobs")

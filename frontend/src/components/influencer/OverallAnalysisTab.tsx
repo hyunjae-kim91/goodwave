@@ -26,14 +26,19 @@ interface UserData {
 
 interface AnalysisData {
   username: string;
+  fullName?: string;
   followers?: number;
+  grade?: string;
   category?: string;
   avgEngagementRate?: number;
   avgVideoPlayCount?: number;
+  avgLikes?: number;
+  avgComments?: number;
   subscriptionMotivationStats?: Array<{motivation: string, percentage: number}>;
   categoryStats?: Array<{category: string, percentage: number}>;
   reelsStats?: Array<{reelId: string, videoPlayCount: number}>;
   postsCount?: number;
+  memo?: string;
 }
 
 interface TopStatEntry {
@@ -141,6 +146,93 @@ const Input = styled.input`
     border-color: #3498db;
     box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.25);
   }
+`;
+
+const Select = styled.select`
+  width: 100%;
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  background-color: white;
+  cursor: pointer;
+`;
+
+const RangeSliderContainer = styled.div`
+  position: relative;
+  width: 100%;
+  height: 40px;
+  display: flex;
+  align-items: center;
+`;
+
+const RangeSliderWrapper = styled.div`
+  position: relative;
+  width: 100%;
+  height: 6px;
+`;
+
+const RangeSliderTrack = styled.div`
+  position: absolute;
+  width: 100%;
+  height: 6px;
+  background: #ddd;
+  border-radius: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+`;
+
+const RangeSliderActiveTrack = styled.div<{ left: number; width: number }>`
+  position: absolute;
+  height: 6px;
+  background: #3498db;
+  border-radius: 3px;
+  left: ${props => props.left}%;
+  width: ${props => props.width}%;
+  top: 50%;
+  transform: translateY(-50%);
+`;
+
+const RangeSlider = styled.input<{ isMin?: boolean }>`
+  position: absolute;
+  width: 100%;
+  height: 6px;
+  background: transparent;
+  outline: none;
+  -webkit-appearance: none;
+  pointer-events: ${props => props.isMin ? 'auto' : 'auto'};
+  z-index: ${props => props.isMin ? 2 : 3};
+  
+  &::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #3498db;
+    cursor: pointer;
+    position: relative;
+    z-index: 4;
+  }
+  
+  &::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #3498db;
+    cursor: pointer;
+    border: none;
+    position: relative;
+    z-index: 4;
+  }
+`;
+
+const RangeValue = styled.div`
+  display: flex;
+  justify-content: space-between;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #6c757d;
 `;
 
 const SearchInput = styled(Input)`
@@ -549,18 +641,85 @@ const formatCategoryStatsLine = (
         .join(', ')
     : '';
 
+// 등급 계산 함수 (평균 조회수 기반)
+const calculateGrade = (avgViews: number | undefined): string => {
+  if (!avgViews || avgViews < 1000) return 'N/A';
+  if (avgViews >= 100001) return '프리미엄';
+  if (avgViews >= 30001) return '골드';
+  if (avgViews >= 5001) return '블루';
+  if (avgViews >= 1000) return '레드';
+  return 'N/A';
+};
+
 const OverallAnalysisTab: React.FC = () => {
   const [users, setUsers] = useState<UserData[]>([]);
   const [analysisData, setAnalysisData] = useState<AnalysisData[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  // 선택 사용자 분류 결과 보기 상태
-  const [selectSearch, setSelectSearch] = useState('');
-  const [selectedUsernames, setSelectedUsernames] = useState<string[]>([]);
-  const [selectedViewData, setSelectedViewData] = useState<AnalysisData[]>([]);
   const [editingUsername, setEditingUsername] = useState<string | null>(null);
   const [overrideForm, setOverrideForm] = useState<OverrideFormState | null>(null);
   const [isSavingOverride, setIsSavingOverride] = useState(false);
-  const filteredUsersForSelect = (users || []).filter(u => u.username.toLowerCase().includes(selectSearch.toLowerCase()));
+  // 메모 편집 상태
+  const [editingMemo, setEditingMemo] = useState<{username: string, memo: string} | null>(null);
+  // 전체 분석 결과 수정 상태
+  const [editingAnalysisRow, setEditingAnalysisRow] = useState<string | null>(null);
+  const [analysisEditForm, setAnalysisEditForm] = useState<{
+    motivation1: string;
+    motivation2: string;
+    category1: string;
+    category2: string;
+    memo: string;
+  } | null>(null);
+  const [isSavingAnalysisEdit, setIsSavingAnalysisEdit] = useState(false);
+  // 필터 상태
+  const [filterExpanded, setFilterExpanded] = useState(false);
+  const [filters, setFilters] = useState<{
+    username: string;
+    followersMin: number;
+    followersMax: number;
+    avgLikesMin: number;
+    avgLikesMax: number;
+    avgCommentsMin: number;
+    avgCommentsMax: number;
+    grade: string;
+    motivation1: string;
+    motivation2: string;
+    category1: string;
+    category2: string;
+    memo: string;
+    accountType: string;
+  }>({
+    username: '',
+    followersMin: 0,
+    followersMax: 10000000,
+    avgLikesMin: 0,
+    avgLikesMax: 1000000,
+    avgCommentsMin: 0,
+    avgCommentsMax: 100000,
+    grade: '',
+    motivation1: '',
+    motivation2: '',
+    category1: '',
+    category2: '',
+    memo: '',
+    accountType: ''
+  });
+
+  // 필터 옵션 정의
+  const gradeOptions = ['', '레드', '블루', '골드', '프리미엄'];
+  const motivationOptions = ['', '실용정보', '리뷰', '스토리', '자기계발', '웰니스', '프리미엄', '감성', '유머', '비주얼'];
+  const categoryOptions = ['', '리빙', '맛집', '뷰티', '여행', '운동/레저', '육아/가족', '일상', '패션', '푸드'];
+  
+  // 범위 슬라이더의 최대값 계산
+  const getMaxValue = (field: 'followers' | 'avgLikes' | 'avgComments'): number => {
+    if (analysisData.length === 0) return 1000000;
+    const values = analysisData.map(data => {
+      if (field === 'followers') return data.followers || 0;
+      if (field === 'avgLikes') return data.avgLikes || 0;
+      if (field === 'avgComments') return data.avgComments || 0;
+      return 0;
+    });
+    return Math.max(...values, 1000);
+  };
 
   // 사용자 목록 로드
   const loadUsers = async () => {
@@ -575,73 +734,6 @@ const OverallAnalysisTab: React.FC = () => {
     } catch (error) {
       console.error('사용자 목록 로드 실패:', error);
       toast.error('사용자 목록을 불러오는데 실패했습니다');
-    }
-  };
-
-  // 선택 사용자 분류 결과 로드
-  const loadSelectedUsersClassification = async () => {
-    if (selectedUsernames.length === 0) {
-      toast.error('최소 한 명의 사용자를 선택해주세요');
-      return;
-    }
-    try {
-      toast.loading('선택한 사용자 분류 결과를 불러오는 중...');
-      const results: AnalysisData[] = [];
-      for (const username of selectedUsernames) {
-        const data: AnalysisData = { username } as AnalysisData;
-        data.subscriptionMotivationStats = [];
-        data.categoryStats = [];
-
-        try {
-          const aggregatedResponse = await fetch(`/api/influencer/aggregated-summary/${username}`);
-          if (aggregatedResponse.ok) {
-            const aggregatedData: AggregatedSummaryResponse = await aggregatedResponse.json();
-            const aggregatedSummaries = aggregatedData?.aggregated_summaries ?? {};
-
-            const motivationEntries = buildTopEntriesFromAggregated(
-              aggregatedSummaries.subscription_motivation,
-            );
-            if (motivationEntries.length) {
-              data.subscriptionMotivationStats = mapTopEntriesToMotivationStats(
-                motivationEntries,
-              );
-            }
-
-            const categoryEntries = buildTopEntriesFromAggregated(aggregatedSummaries.category);
-            if (categoryEntries.length) {
-              data.categoryStats = mapTopEntriesToCategoryStats(categoryEntries);
-            }
-          }
-        } catch (error) {
-          console.log(`${username} 집계된 분류 요약 로드 실패:`, error);
-        }
-
-        if (!data.subscriptionMotivationStats?.length || !data.categoryStats?.length) {
-          try {
-            const res = await fetch(`/api/influencer/files/combined-classification/${username}`);
-            if (res.ok) {
-              const cls = await res.json();
-              const results = Array.isArray(cls.results) ? cls.results : [];
-              if (!data.subscriptionMotivationStats?.length) {
-                data.subscriptionMotivationStats = calculateSubscriptionMotivationStats(results);
-              }
-              if (!data.categoryStats?.length) {
-                data.categoryStats = calculateCategoryStats(results);
-              }
-            }
-          } catch (error) {
-            console.log(`${username} 통합 분류 결과 로드 실패:`, error);
-          }
-        }
-        results.push(data);
-      }
-      setSelectedViewData(results);
-      cancelOverrideEdit();
-      toast.success('분류 결과를 불러왔습니다');
-    } catch (e: any) {
-      toast.error('분류 결과 로드 중 오류가 발생했습니다');
-    } finally {
-      toast.dismiss();
     }
   };
 
@@ -679,6 +771,18 @@ const OverallAnalysisTab: React.FC = () => {
       }
 
       setAnalysisData(analysisResults);
+      
+      // 필터 최대값 업데이트
+      const maxFollowers = Math.max(...analysisResults.map(r => r.followers || 0), 1000000);
+      const maxLikes = Math.max(...analysisResults.map(r => r.avgLikes || 0), 100000);
+      const maxComments = Math.max(...analysisResults.map(r => r.avgComments || 0), 10000);
+      setFilters(prev => ({
+        ...prev,
+        followersMax: Math.max(prev.followersMax, maxFollowers),
+        avgLikesMax: Math.max(prev.avgLikesMax, maxLikes),
+        avgCommentsMax: Math.max(prev.avgCommentsMax, maxComments),
+      }));
+      
       toast.success('전체 분석이 완료되었습니다');
       
     } catch (error) {
@@ -708,10 +812,12 @@ const OverallAnalysisTab: React.FC = () => {
           
           console.log(`${username} 프로필 데이터:`, profileData);
           
-          // followers, category_name, avg_engagement을 profile.json에서 가져오기
+          // followers, category_name, avg_engagement, fullName, memo를 profile.json에서 가져오기
           userAnalysis.followers = profileData.followers || 0;
           userAnalysis.category = profileData.category_name || '';
           userAnalysis.postsCount = profileData.posts_count || 0;
+          userAnalysis.fullName = profileData.fullName || '';
+          userAnalysis.memo = profileData.memo || '';
           
           // 평균 참여율 계산 (소수점을 퍼센트로 변환)
           if (profileData.avg_engagement !== undefined) {
@@ -767,6 +873,53 @@ const OverallAnalysisTab: React.FC = () => {
               userAnalysis.avgVideoPlayCount = Math.round(sum / videoPlayCounts.length);
               
               console.log(`${username} 전체 평균 비디오 재생수:`, userAnalysis.avgVideoPlayCount);
+            }
+            
+            // 릴스 24개의 평균 좋아요 수, 평균 댓글 수 계산 (최고/최저 2개 제거)
+            const reels = reelsData.results || [];
+            const top24Reels = reels.slice(0, 24); // 최신 24개 릴스
+            
+            const likesCounts: number[] = [];
+            const commentsCounts: number[] = [];
+            
+            top24Reels.forEach((reel: any) => {
+              // 좋아요 수: likes, likes_count, like_count 등 여러 필드명 지원
+              const likes = reel.likes ?? reel.likes_count ?? reel.like_count;
+              if (likes !== undefined && likes !== null && likes > 0) {
+                likesCounts.push(Number(likes));
+              }
+              // 댓글 수: num_comments, comments_count, comment_count 등 여러 필드명 지원
+              const comments = reel.num_comments ?? reel.comments_count ?? reel.comment_count;
+              if (comments !== undefined && comments !== null && comments > 0) {
+                commentsCounts.push(Number(comments));
+              }
+            });
+            
+            // 좋아요 수 평균 계산 (최고/최저 2개 제거)
+            if (likesCounts.length > 4) {
+              const sortedLikes = likesCounts.sort((a, b) => a - b);
+              const filteredLikes = sortedLikes.slice(2, -2); // 최고/최저 2개 제거
+              const likesSum = filteredLikes.reduce((acc, count) => acc + count, 0);
+              userAnalysis.avgLikes = Math.round(likesSum / filteredLikes.length);
+            } else if (likesCounts.length > 0) {
+              const likesSum = likesCounts.reduce((acc, count) => acc + count, 0);
+              userAnalysis.avgLikes = Math.round(likesSum / likesCounts.length);
+            }
+            
+            // 댓글 수 평균 계산 (최고/최저 2개 제거)
+            if (commentsCounts.length > 4) {
+              const sortedComments = commentsCounts.sort((a, b) => a - b);
+              const filteredComments = sortedComments.slice(2, -2); // 최고/최저 2개 제거
+              const commentsSum = filteredComments.reduce((acc, count) => acc + count, 0);
+              userAnalysis.avgComments = Math.round(commentsSum / filteredComments.length);
+            } else if (commentsCounts.length > 0) {
+              const commentsSum = commentsCounts.reduce((acc, count) => acc + count, 0);
+              userAnalysis.avgComments = Math.round(commentsSum / commentsCounts.length);
+            }
+            
+            // 등급 계산 (평균 조회수 기반)
+            if (userAnalysis.avgVideoPlayCount) {
+              userAnalysis.grade = calculateGrade(userAnalysis.avgVideoPlayCount);
             }
           }
         }
@@ -1086,7 +1239,9 @@ const OverallAnalysisTab: React.FC = () => {
       setIsSavingOverride(true);
       await classificationService.updateAggregatedSummary(editingUsername, payload);
       toast.success('수정 내용이 저장되었습니다.');
-      setSelectedViewData(prev =>
+      
+      // analysisData 업데이트
+      setAnalysisData(prev =>
         prev.map(row => {
           if (row.username !== editingUsername) {
             return row;
@@ -1126,7 +1281,7 @@ const OverallAnalysisTab: React.FC = () => {
     // UTF-8 BOM 추가하여 엑셀에서 한글이 깨지지 않도록 함
     const BOM = '\uFEFF';
     const csvContent = BOM + [
-      ['사용자명', '팔로워', '카테고리', '평균참여율(%)', '평균비디오재생수', '구독 동기 분류', '카테고리 분류'].join(','),
+      ['사용자명', '팔로워', '카테고리', '평균참여율(%)', '평균 조회수', '구독 동기 분류', '카테고리 분류'].join(','),
       ...(analysisData || []).map(data => [
         data.username,
         data.followers || 0,
@@ -1162,211 +1317,6 @@ const OverallAnalysisTab: React.FC = () => {
         <BarChart3 size={24} />
         전체 분석
       </Title>
-
-      {/* 선택 사용자 분류 결과 보기 */}
-      <Section>
-        <SectionTitle>선택 사용자 분류 결과 보기</SectionTitle>
-        <Grid>
-          <div>
-            <SearchContainer>
-              <SearchIcon />
-              <SearchInput
-                type="text"
-                value={selectSearch}
-                onChange={(e) => setSelectSearch(e.target.value)}
-                placeholder="사용자 검색..."
-              />
-            </SearchContainer>
-            <UserListContainer style={{ marginTop: '0.75rem' }}>
-              {(filteredUsersForSelect || []).map(u => (
-                <UserItem key={u.username}>
-                  <input
-                    type="checkbox"
-                    checked={selectedUsernames.includes(u.username)}
-                    onChange={(e) => {
-                      setSelectedUsernames(prev => e.target.checked ? [...prev, u.username] : prev.filter(x => x !== u.username));
-                    }}
-                  />
-                  <UserText>@{u.username}</UserText>
-                </UserItem>
-              ))}
-              {filteredUsersForSelect.length === 0 && (
-                <div style={{ padding: '0.75rem', fontSize: '0.875rem', color: '#6c757d' }}>검색 결과 없음</div>
-              )}
-            </UserListContainer>
-            <ButtonGroup>
-              <SmallButton
-                onClick={() => setSelectedUsernames((filteredUsersForSelect || []).map(u => u.username))}
-              >
-                전체 선택
-              </SmallButton>
-              <SmallButton
-                onClick={() => setSelectedUsernames([])}
-              >
-                선택 해제
-              </SmallButton>
-            </ButtonGroup>
-          </div>
-          <div style={{ gridColumn: 'span 2' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-              <Button onClick={loadSelectedUsersClassification}>
-                선택한 사용자 분류 결과 보기
-              </Button>
-              {selectedViewData.length > 0 && (
-                <span style={{ fontSize: '0.875rem', color: '#6c757d' }}>{selectedViewData.length}명 결과</span>
-              )}
-            </div>
-            {selectedViewData.length > 0 ? (
-              <TableContainer>
-                <Table>
-                  <thead>
-                    <tr>
-                      <TableHeader>사용자</TableHeader>
-                      <TableHeader>구독 동기 상위2</TableHeader>
-                      <TableHeader>카테고리 상위2</TableHeader>
-                      <TableHeader>관리</TableHeader>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(selectedViewData || []).map(row => (
-                      <React.Fragment key={row.username}>
-                        <tr>
-                          <TableCell>@{row.username}</TableCell>
-                          <TableCell>
-                            {formatMotivationStatsLine(row.subscriptionMotivationStats)
-                              ? (
-                                <StatItem>
-                                  {formatMotivationStatsLine(row.subscriptionMotivationStats)}
-                                </StatItem>
-                              ) : (
-                                <span style={{ color: '#9ca3af' }}>N/A</span>
-                              )}
-                          </TableCell>
-                          <TableCell>
-                            {formatCategoryStatsLine(row.categoryStats)
-                              ? (
-                                <StatItem>
-                                  {formatCategoryStatsLine(row.categoryStats)}
-                                </StatItem>
-                              ) : (
-                                <span style={{ color: '#9ca3af' }}>N/A</span>
-                              )}
-                          </TableCell>
-                          <TableCell>
-                            <SmallButton
-                              type="button"
-                              onClick={() => toggleOverrideEditor(row)}
-                              disabled={isSavingOverride && editingUsername === row.username}
-                            >
-                              {editingUsername === row.username ? '편집 취소' : '수정'}
-                            </SmallButton>
-                          </TableCell>
-                        </tr>
-                        {editingUsername === row.username && overrideForm && (
-                          <tr>
-                            <TableCell colSpan={4}>
-                              <OverrideFormContainer>
-                                <OverrideSection>
-                                  <OverrideSectionTitle>구독 동기 상위 2</OverrideSectionTitle>
-                                  <OverrideFieldGrid>
-                                    <Input
-                                      type="text"
-                                      placeholder="1순위 분류명"
-                                      value={overrideForm.subscriptionMotivation.primaryLabel}
-                                      onChange={(e) => handleOverrideInputChange('subscriptionMotivation', 'primaryLabel', e.target.value)}
-                                    />
-                                    <Input
-                                      type="number"
-                                      placeholder="1순위 %"
-                                      min="0"
-                                      max="100"
-                                      step="0.1"
-                                      value={overrideForm.subscriptionMotivation.primaryPercentage}
-                                      onChange={(e) => handleOverrideInputChange('subscriptionMotivation', 'primaryPercentage', e.target.value)}
-                                    />
-                                    <Input
-                                      type="text"
-                                      placeholder="2순위 분류명"
-                                      value={overrideForm.subscriptionMotivation.secondaryLabel}
-                                      onChange={(e) => handleOverrideInputChange('subscriptionMotivation', 'secondaryLabel', e.target.value)}
-                                    />
-                                    <Input
-                                      type="number"
-                                      placeholder="2순위 %"
-                                      min="0"
-                                      max="100"
-                                      step="0.1"
-                                      value={overrideForm.subscriptionMotivation.secondaryPercentage}
-                                      onChange={(e) => handleOverrideInputChange('subscriptionMotivation', 'secondaryPercentage', e.target.value)}
-                                    />
-                                  </OverrideFieldGrid>
-                                </OverrideSection>
-                                <OverrideSection>
-                                  <OverrideSectionTitle>카테고리 상위 2</OverrideSectionTitle>
-                                  <OverrideFieldGrid>
-                                    <Input
-                                      type="text"
-                                      placeholder="1순위 카테고리"
-                                      value={overrideForm.category.primaryLabel}
-                                      onChange={(e) => handleOverrideInputChange('category', 'primaryLabel', e.target.value)}
-                                    />
-                                    <Input
-                                      type="number"
-                                      placeholder="1순위 %"
-                                      min="0"
-                                      max="100"
-                                      step="0.1"
-                                      value={overrideForm.category.primaryPercentage}
-                                      onChange={(e) => handleOverrideInputChange('category', 'primaryPercentage', e.target.value)}
-                                    />
-                                    <Input
-                                      type="text"
-                                      placeholder="2순위 카테고리"
-                                      value={overrideForm.category.secondaryLabel}
-                                      onChange={(e) => handleOverrideInputChange('category', 'secondaryLabel', e.target.value)}
-                                    />
-                                    <Input
-                                      type="number"
-                                      placeholder="2순위 %"
-                                      min="0"
-                                      max="100"
-                                      step="0.1"
-                                      value={overrideForm.category.secondaryPercentage}
-                                      onChange={(e) => handleOverrideInputChange('category', 'secondaryPercentage', e.target.value)}
-                                    />
-                                  </OverrideFieldGrid>
-                                </OverrideSection>
-                                <OverrideActions>
-                                  <Button
-                                    type="button"
-                                    onClick={saveOverrideChanges}
-                                    disabled={isSavingOverride}
-                                  >
-                                    {isSavingOverride ? '저장 중...' : '저장'}
-                                  </Button>
-                                  <SmallButton
-                                    type="button"
-                                    onClick={cancelOverrideEdit}
-                                    disabled={isSavingOverride}
-                                  >
-                                    취소
-                                  </SmallButton>
-                                </OverrideActions>
-                              </OverrideFormContainer>
-                            </TableCell>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                </Table>
-              </TableContainer>
-            ) : (
-              <div style={{ fontSize: '0.875rem', color: '#6c757d' }}>왼쪽에서 사용자 검색/선택 후 "선택한 사용자 분류 결과 보기"를 눌러주세요.</div>
-            )}
-          </div>
-        </Grid>
-      </Section>
 
       <HeaderActions>
         <Button
@@ -1407,6 +1357,297 @@ const OverallAnalysisTab: React.FC = () => {
         </InfoText>
       </InfoBox>
 
+      {/* 필터 섹션 */}
+      {analysisData.length > 0 && (
+        <Section>
+          <div 
+            onClick={() => setFilterExpanded(!filterExpanded)} 
+            style={{ 
+              cursor: 'pointer', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '0.5rem',
+              marginBottom: filterExpanded ? '1rem' : '0'
+            }}
+          >
+            <span style={{ fontSize: '0.8rem' }}>{filterExpanded ? '▼' : '▶'}</span>
+            <SectionTitle style={{ margin: 0 }}>필터</SectionTitle>
+          </div>
+          
+          {filterExpanded && (
+            <div style={{ marginTop: '1rem' }}>
+              {/* 첫 번째 줄: 아이디, 등급, 계정 유형 */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>아이디</label>
+                  <Select
+                    value={filters.username}
+                    onChange={(e) => setFilters({...filters, username: e.target.value})}
+                  >
+                    <option value="">전체</option>
+                    {analysisData.map(data => (
+                      <option key={data.username} value={data.username}>@{data.username}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>등급</label>
+                  <Select
+                    value={filters.grade}
+                    onChange={(e) => setFilters({...filters, grade: e.target.value})}
+                  >
+                    {gradeOptions.map(option => (
+                      <option key={option} value={option}>{option || '전체'}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>계정 유형</label>
+                  <Select
+                    value={filters.accountType}
+                    onChange={(e) => setFilters({...filters, accountType: e.target.value})}
+                  >
+                    {categoryOptions.map(option => (
+                      <option key={option} value={option}>{option || '전체'}</option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              {/* 두 번째 줄: 평균 팔로워 수, 평균 좋아요 수, 평균 댓글 수 (슬라이더) */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
+                    팔로워 수
+                  </label>
+                  <RangeSliderContainer>
+                    <RangeSliderWrapper>
+                      <RangeSliderTrack />
+                      <RangeSliderActiveTrack
+                        left={(filters.followersMin || 0) / getMaxValue('followers') * 100}
+                        width={((filters.followersMax || getMaxValue('followers')) - (filters.followersMin || 0)) / getMaxValue('followers') * 100}
+                      />
+                      <RangeSlider
+                        type="range"
+                        min="0"
+                        max={getMaxValue('followers')}
+                        value={filters.followersMin || 0}
+                        isMin={true}
+                        onChange={(e) => {
+                          const newMin = parseInt(e.target.value) || 0;
+                          const max = filters.followersMax || getMaxValue('followers');
+                          if (newMin <= max) {
+                            setFilters({...filters, followersMin: newMin});
+                          }
+                        }}
+                      />
+                      <RangeSlider
+                        type="range"
+                        min="0"
+                        max={getMaxValue('followers')}
+                        value={filters.followersMax || getMaxValue('followers')}
+                        isMin={false}
+                        onChange={(e) => {
+                          const newMax = parseInt(e.target.value) || getMaxValue('followers');
+                          const min = filters.followersMin || 0;
+                          if (newMax >= min) {
+                            setFilters({...filters, followersMax: newMax});
+                          }
+                        }}
+                      />
+                    </RangeSliderWrapper>
+                  </RangeSliderContainer>
+                  <RangeValue>
+                    <span>{filters.followersMin.toLocaleString()}</span>
+                    <span>{filters.followersMax.toLocaleString()}</span>
+                  </RangeValue>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
+                    평균 좋아요 수
+                  </label>
+                  <RangeSliderContainer>
+                    <RangeSliderWrapper>
+                      <RangeSliderTrack />
+                      <RangeSliderActiveTrack
+                        left={(filters.avgLikesMin || 0) / getMaxValue('avgLikes') * 100}
+                        width={((filters.avgLikesMax || getMaxValue('avgLikes')) - (filters.avgLikesMin || 0)) / getMaxValue('avgLikes') * 100}
+                      />
+                      <RangeSlider
+                        type="range"
+                        min="0"
+                        max={getMaxValue('avgLikes')}
+                        value={filters.avgLikesMin || 0}
+                        isMin={true}
+                        onChange={(e) => {
+                          const newMin = parseInt(e.target.value) || 0;
+                          const max = filters.avgLikesMax || getMaxValue('avgLikes');
+                          if (newMin <= max) {
+                            setFilters({...filters, avgLikesMin: newMin});
+                          }
+                        }}
+                      />
+                      <RangeSlider
+                        type="range"
+                        min="0"
+                        max={getMaxValue('avgLikes')}
+                        value={filters.avgLikesMax || getMaxValue('avgLikes')}
+                        isMin={false}
+                        onChange={(e) => {
+                          const newMax = parseInt(e.target.value) || getMaxValue('avgLikes');
+                          const min = filters.avgLikesMin || 0;
+                          if (newMax >= min) {
+                            setFilters({...filters, avgLikesMax: newMax});
+                          }
+                        }}
+                      />
+                    </RangeSliderWrapper>
+                  </RangeSliderContainer>
+                  <RangeValue>
+                    <span>{filters.avgLikesMin.toLocaleString()}</span>
+                    <span>{filters.avgLikesMax.toLocaleString()}</span>
+                  </RangeValue>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
+                    평균 댓글 수
+                  </label>
+                  <RangeSliderContainer>
+                    <RangeSliderWrapper>
+                      <RangeSliderTrack />
+                      <RangeSliderActiveTrack
+                        left={(filters.avgCommentsMin || 0) / getMaxValue('avgComments') * 100}
+                        width={((filters.avgCommentsMax || getMaxValue('avgComments')) - (filters.avgCommentsMin || 0)) / getMaxValue('avgComments') * 100}
+                      />
+                      <RangeSlider
+                        type="range"
+                        min="0"
+                        max={getMaxValue('avgComments')}
+                        value={filters.avgCommentsMin || 0}
+                        isMin={true}
+                        onChange={(e) => {
+                          const newMin = parseInt(e.target.value) || 0;
+                          const max = filters.avgCommentsMax || getMaxValue('avgComments');
+                          if (newMin <= max) {
+                            setFilters({...filters, avgCommentsMin: newMin});
+                          }
+                        }}
+                      />
+                      <RangeSlider
+                        type="range"
+                        min="0"
+                        max={getMaxValue('avgComments')}
+                        value={filters.avgCommentsMax || getMaxValue('avgComments')}
+                        isMin={false}
+                        onChange={(e) => {
+                          const newMax = parseInt(e.target.value) || getMaxValue('avgComments');
+                          const min = filters.avgCommentsMin || 0;
+                          if (newMax >= min) {
+                            setFilters({...filters, avgCommentsMax: newMax});
+                          }
+                        }}
+                      />
+                    </RangeSliderWrapper>
+                  </RangeSliderContainer>
+                  <RangeValue>
+                    <span>{filters.avgCommentsMin.toLocaleString()}</span>
+                    <span>{filters.avgCommentsMax.toLocaleString()}</span>
+                  </RangeValue>
+                </div>
+              </div>
+
+              {/* 세 번째 줄: 구독동기1, 구독동기 2, 카테고리 1, 카테고리 2 */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>구독동기 1</label>
+                  <Select
+                    value={filters.motivation1}
+                    onChange={(e) => setFilters({...filters, motivation1: e.target.value})}
+                  >
+                    {motivationOptions.map(option => (
+                      <option key={option} value={option}>{option || '전체'}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>구독동기 2</label>
+                  <Select
+                    value={filters.motivation2}
+                    onChange={(e) => setFilters({...filters, motivation2: e.target.value})}
+                  >
+                    {motivationOptions.map(option => (
+                      <option key={option} value={option}>{option || '전체'}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>카테고리 1</label>
+                  <Select
+                    value={filters.category1}
+                    onChange={(e) => setFilters({...filters, category1: e.target.value})}
+                  >
+                    {categoryOptions.map(option => (
+                      <option key={option} value={option}>{option || '전체'}</option>
+                    ))}
+                  </Select>
+                </div>
+                <div>
+                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>카테고리 2</label>
+                  <Select
+                    value={filters.category2}
+                    onChange={(e) => setFilters({...filters, category2: e.target.value})}
+                  >
+                    {categoryOptions.map(option => (
+                      <option key={option} value={option}>{option || '전체'}</option>
+                    ))}
+                  </Select>
+                </div>
+              </div>
+
+              {/* 네 번째 줄: 메모 */}
+              <div style={{ marginBottom: '1rem' }}>
+                <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>메모</label>
+                <Input
+                  type="text"
+                  placeholder="메모 검색"
+                  value={filters.memo}
+                  onChange={(e) => setFilters({...filters, memo: e.target.value})}
+                />
+              </div>
+
+              {/* 필터 초기화 버튼 */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                <SmallButton
+                  onClick={() => {
+                    const maxFollowers = getMaxValue('followers');
+                    const maxLikes = getMaxValue('avgLikes');
+                    const maxComments = getMaxValue('avgComments');
+                    setFilters({
+                      username: '',
+                      followersMin: 0,
+                      followersMax: maxFollowers,
+                      avgLikesMin: 0,
+                      avgLikesMax: maxLikes,
+                      avgCommentsMin: 0,
+                      avgCommentsMax: maxComments,
+                      grade: '',
+                      motivation1: '',
+                      motivation2: '',
+                      category1: '',
+                      category2: '',
+                      memo: '',
+                      accountType: ''
+                    });
+                  }}
+                >
+                  필터 초기화
+                </SmallButton>
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+
       {/* 분석 결과 테이블 */}
       {analysisData.length > 0 ? (
         <Section>
@@ -1415,54 +1656,326 @@ const OverallAnalysisTab: React.FC = () => {
               <thead>
                 <tr>
                   <TableHeader>사용자명</TableHeader>
+                  <TableHeader>이름</TableHeader>
                   <TableHeader>팔로워</TableHeader>
-                  <TableHeader>카테고리</TableHeader>
+                  <TableHeader>등급</TableHeader>
+                  <TableHeader>계정 유형</TableHeader>
                   <TableHeader>평균참여율</TableHeader>
-                  <TableHeader>평균비디오재생수</TableHeader>
-                  <TableHeader>구독 동기 분류</TableHeader>
-                  <TableHeader>카테고리 분류</TableHeader>
+                  <TableHeader>평균 조회수</TableHeader>
+                  <TableHeader>평균 좋아요</TableHeader>
+                  <TableHeader>평균 댓글</TableHeader>
+                  <TableHeader>구독 동기 1</TableHeader>
+                  <TableHeader>구독 동기 2</TableHeader>
+                  <TableHeader>카테고리 1</TableHeader>
+                  <TableHeader>카테고리 2</TableHeader>
+                  <TableHeader>메모</TableHeader>
+                  <TableHeader>관리</TableHeader>
                 </tr>
               </thead>
               <tbody>
-                {(analysisData || []).map((data, index) => (
-                  <TableRow key={data.username} isEven={index % 2 === 0}>
-                    <TableCell>
-                      <UsernameBadge>@{data.username}</UsernameBadge>
-                    </TableCell>
-                    <TableCell>
-                      {data.followers ? data.followers.toLocaleString() : 'N/A'}
-                    </TableCell>
-                    <TableCell>
-                      {data.category ?? ''}
-                    </TableCell>
-                    <TableCell>
-                      {data.avgEngagementRate ? `${data.avgEngagementRate}%` : 'N/A'}
-                    </TableCell>
-                    <TableCell>
-                      {data.avgVideoPlayCount ? data.avgVideoPlayCount.toLocaleString() : 'N/A'}
-                    </TableCell>
-                    <TableCell>
-                      {formatMotivationStatsLine(data.subscriptionMotivationStats)
-                        ? (
-                          <StatItem>
-                            {formatMotivationStatsLine(data.subscriptionMotivationStats)}
-                          </StatItem>
-                        ) : (
-                          <span style={{ color: '#9ca3af' }}>N/A</span>
+                {(analysisData || []).filter((data) => {
+                  // 필터링 로직
+                  if (filters.username && data.username !== filters.username) {
+                    return false;
+                  }
+                  if (data.followers !== undefined) {
+                    const min = filters.followersMin || 0;
+                    const max = filters.followersMax || getMaxValue('followers');
+                    if (data.followers < min || data.followers > max) {
+                      return false;
+                    }
+                  }
+                  if (data.avgLikes !== undefined) {
+                    const min = filters.avgLikesMin || 0;
+                    const max = filters.avgLikesMax || getMaxValue('avgLikes');
+                    if (data.avgLikes < min || data.avgLikes > max) {
+                      return false;
+                    }
+                  }
+                  if (data.avgComments !== undefined) {
+                    const min = filters.avgCommentsMin || 0;
+                    const max = filters.avgCommentsMax || getMaxValue('avgComments');
+                    if (data.avgComments < min || data.avgComments > max) {
+                      return false;
+                    }
+                  }
+                  if (filters.grade && data.grade !== filters.grade) {
+                    return false;
+                  }
+                  const motivation1 = data.subscriptionMotivationStats?.[0];
+                  if (filters.motivation1 && (!motivation1 || motivation1.motivation !== filters.motivation1)) {
+                    return false;
+                  }
+                  const motivation2 = data.subscriptionMotivationStats?.[1];
+                  if (filters.motivation2 && (!motivation2 || motivation2.motivation !== filters.motivation2)) {
+                    return false;
+                  }
+                  const category1 = data.categoryStats?.[0];
+                  if (filters.category1 && (!category1 || category1.category !== filters.category1)) {
+                    return false;
+                  }
+                  const category2 = data.categoryStats?.[1];
+                  if (filters.category2 && (!category2 || category2.category !== filters.category2)) {
+                    return false;
+                  }
+                  if (filters.memo && (!data.memo || !data.memo.toLowerCase().includes(filters.memo.toLowerCase()))) {
+                    return false;
+                  }
+                  if (filters.accountType && (!data.category || data.category !== filters.accountType)) {
+                    return false;
+                  }
+                  return true;
+                }).map((data, index) => {
+                  const motivation1 = data.subscriptionMotivationStats?.[0];
+                  const motivation2 = data.subscriptionMotivationStats?.[1];
+                  const category1 = data.categoryStats?.[0];
+                  const category2 = data.categoryStats?.[1];
+                  
+                  return (
+                    <React.Fragment key={data.username}>
+                      <TableRow isEven={index % 2 === 0}>
+                      <TableCell>
+                        <UsernameBadge>@{data.username}</UsernameBadge>
+                      </TableCell>
+                      <TableCell>
+                        {data.fullName || '-'}
+                      </TableCell>
+                      <TableCell>
+                        {data.followers ? data.followers.toLocaleString() : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        {data.grade || 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        {data.category ?? ''}
+                      </TableCell>
+                      <TableCell>
+                        {data.avgEngagementRate ? `${data.avgEngagementRate}%` : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        {data.avgVideoPlayCount ? data.avgVideoPlayCount.toLocaleString() : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        {data.avgLikes ? data.avgLikes.toLocaleString() : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                        {data.avgComments ? data.avgComments.toLocaleString() : 'N/A'}
+                      </TableCell>
+                      <TableCell>
+                          {motivation1 ? motivation1.motivation : '-'}
+                      </TableCell>
+                      <TableCell>
+                          {motivation2 ? motivation2.motivation : '-'}
+                      </TableCell>
+                      <TableCell>
+                          {category1 ? category1.category : '-'}
+                      </TableCell>
+                      <TableCell>
+                          {category2 ? category2.category : '-'}
+                      </TableCell>
+                      <TableCell>
+                          {editingAnalysisRow === data.username && analysisEditForm ? (
+                          <input
+                            type="text"
+                              value={analysisEditForm.memo}
+                              onChange={(e) => analysisEditForm && setAnalysisEditForm({...analysisEditForm, memo: e.target.value})}
+                              style={{width: '100%', padding: '4px', border: '1px solid #ddd', borderRadius: '4px'}}
+                            />
+                          ) : (
+                            <span>{data.memo || '-'}</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {editingAnalysisRow === data.username ? (
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <SmallButton
+                                onClick={async () => {
+                                  if (!analysisEditForm) return;
+                                  
+                                  try {
+                                    setIsSavingAnalysisEdit(true);
+                                    
+                                    // 구독동기/카테고리 저장
+                                    const classificationPayload: ClassificationOverrideUpdateRequest = {};
+                                    
+                                    if (analysisEditForm.motivation1) {
+                                      const motivation1Percent = motivation1?.percentage || 0;
+                                      const motivation2Percent = motivation2?.percentage || 0;
+                                      classificationPayload.subscription_motivation = {
+                                        primary_label: analysisEditForm.motivation1,
+                                        primary_percentage: motivation1Percent,
+                                        ...(analysisEditForm.motivation2 ? {
+                                          secondary_label: analysisEditForm.motivation2,
+                                          secondary_percentage: motivation2Percent
+                                        } : {})
+                                      };
+                                    }
+                                    
+                                    if (analysisEditForm.category1) {
+                                      const category1Percent = category1?.percentage || 0;
+                                      const category2Percent = category2?.percentage || 0;
+                                      classificationPayload.category = {
+                                        primary_label: analysisEditForm.category1,
+                                        primary_percentage: category1Percent,
+                                        ...(analysisEditForm.category2 ? {
+                                          secondary_label: analysisEditForm.category2,
+                                          secondary_percentage: category2Percent
+                                        } : {})
+                                      };
+                                    }
+                                    
+                                    if (Object.keys(classificationPayload).length > 0) {
+                                      await classificationService.updateAggregatedSummary(data.username, classificationPayload);
+                                    }
+                                    
+                                    // 메모 저장
+                                    const memoResponse = await fetch(`/api/influencer/files/user-profile/${data.username}/memo`, {
+                                      method: 'PUT',
+                                      headers: {
+                                        'Content-Type': 'application/json',
+                                      },
+                                      body: JSON.stringify({ memo: analysisEditForm.memo || null }),
+                                    });
+                                    
+                                    if (!memoResponse.ok) {
+                                      throw new Error('메모 저장 실패');
+                                    }
+                                    
+                                    // 로컬 상태 업데이트
+                                    const updated = analysisData.map(item => {
+                                      if (item.username === data.username) {
+                                        const updatedItem = {...item};
+                                        
+                                        if (analysisEditForm.motivation1) {
+                                          updatedItem.subscriptionMotivationStats = [
+                                            { motivation: analysisEditForm.motivation1, percentage: motivation1?.percentage || 0 },
+                                            ...(analysisEditForm.motivation2 ? [{ motivation: analysisEditForm.motivation2, percentage: motivation2?.percentage || 0 }] : [])
+                                          ];
+                                        }
+                                        
+                                        if (analysisEditForm.category1) {
+                                          updatedItem.categoryStats = [
+                                            { category: analysisEditForm.category1, percentage: category1?.percentage || 0 },
+                                            ...(analysisEditForm.category2 ? [{ category: analysisEditForm.category2, percentage: category2?.percentage || 0 }] : [])
+                                          ];
+                                        }
+                                        
+                                        updatedItem.memo = analysisEditForm.memo || '';
+                                        
+                                        return updatedItem;
+                                      }
+                                      return item;
+                                    });
+                                    
+                              setAnalysisData(updated);
+                                    setEditingAnalysisRow(null);
+                                    setAnalysisEditForm(null);
+                                    toast.success('수정 내용이 저장되었습니다');
+                                  } catch (error: any) {
+                                    console.error('저장 오류:', error);
+                                    toast.error(error?.message || '저장 중 오류가 발생했습니다');
+                                  } finally {
+                                    setIsSavingAnalysisEdit(false);
+                                  }
+                                }}
+                                disabled={isSavingAnalysisEdit}
+                              >
+                                {isSavingAnalysisEdit ? '저장 중...' : '저장'}
+                              </SmallButton>
+                              <SmallButton
+                                onClick={() => {
+                                  setEditingAnalysisRow(null);
+                                  setAnalysisEditForm(null);
+                                }}
+                                disabled={isSavingAnalysisEdit}
+                              >
+                                취소
+                              </SmallButton>
+                            </div>
+                          ) : (
+                            <SmallButton
+                              onClick={() => {
+                                setEditingAnalysisRow(data.username);
+                                setAnalysisEditForm({
+                                  motivation1: motivation1?.motivation || '',
+                                  motivation2: motivation2?.motivation || '',
+                                  category1: category1?.category || '',
+                                  category2: category2?.category || '',
+                                  memo: data.memo || ''
+                                });
+                              }}
+                            >
+                              수정
+                            </SmallButton>
                         )}
-                    </TableCell>
-                    <TableCell>
-                      {formatCategoryStatsLine(data.categoryStats)
-                        ? (
-                          <StatItem>
-                            {formatCategoryStatsLine(data.categoryStats)}
-                          </StatItem>
-                        ) : (
-                          <span style={{ color: '#9ca3af' }}>N/A</span>
-                        )}
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                    </TableRow>
+                      {editingAnalysisRow === data.username && analysisEditForm && (
+                        <TableRow>
+                          <TableCell colSpan={15}>
+                            <OverrideFormContainer>
+                              <OverrideSection>
+                                <OverrideSectionTitle>구독 동기</OverrideSectionTitle>
+                                <OverrideFieldGrid>
+                                  <div>
+                                    <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>구독 동기 1</label>
+                                    <Input
+                                      type="text"
+                                      placeholder="구독 동기 1"
+                                      value={analysisEditForm.motivation1}
+                                      onChange={(e) => setAnalysisEditForm({...analysisEditForm, motivation1: e.target.value})}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>구독 동기 2</label>
+                                    <Input
+                                      type="text"
+                                      placeholder="구독 동기 2"
+                                      value={analysisEditForm.motivation2}
+                                      onChange={(e) => setAnalysisEditForm({...analysisEditForm, motivation2: e.target.value})}
+                                    />
+                                  </div>
+                                </OverrideFieldGrid>
+                              </OverrideSection>
+                              <OverrideSection>
+                                <OverrideSectionTitle>카테고리</OverrideSectionTitle>
+                                <OverrideFieldGrid>
+                                  <div>
+                                    <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>카테고리 1</label>
+                                    <Input
+                                      type="text"
+                                      placeholder="카테고리 1"
+                                      value={analysisEditForm.category1}
+                                      onChange={(e) => setAnalysisEditForm({...analysisEditForm, category1: e.target.value})}
+                                    />
+                                  </div>
+                                  <div>
+                                    <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>카테고리 2</label>
+                                    <Input
+                                      type="text"
+                                      placeholder="카테고리 2"
+                                      value={analysisEditForm.category2}
+                                      onChange={(e) => setAnalysisEditForm({...analysisEditForm, category2: e.target.value})}
+                                    />
+                                  </div>
+                                </OverrideFieldGrid>
+                              </OverrideSection>
+                              <OverrideSection>
+                                <OverrideSectionTitle>메모</OverrideSectionTitle>
+                                <Input
+                                  type="text"
+                                  placeholder="메모"
+                                  value={analysisEditForm.memo}
+                                  onChange={(e) => setAnalysisEditForm({...analysisEditForm, memo: e.target.value})}
+                                />
+                              </OverrideSection>
+                            </OverrideFormContainer>
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
               </tbody>
             </Table>
           </TableContainer>

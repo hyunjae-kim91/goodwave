@@ -742,7 +742,7 @@ const InstagramPostReport: React.FC = () => {
                         <ViewCount>{reel.video_view_count.toLocaleString()}</ViewCount>
                       </TableCell>
                       <TableCell>
-                        <MetaInfo>{getAnalysisValue(reel.subscription_motivation)}</MetaInfo>
+                        <MetaInfo>{getAnalysisValue(reel.account_subscription_motivation || reel.subscription_motivation)}</MetaInfo>
                       </TableCell>
                       <TableCell>
                         <MetaInfo>{getAnalysisValue(reel.category)}</MetaInfo>

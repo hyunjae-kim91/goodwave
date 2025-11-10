@@ -206,6 +206,7 @@ class InfluencerProfile(Base):
     is_business_account = Column(Boolean, default=False)
     is_professional_account = Column(Boolean, default=False)
     is_verified = Column(Boolean, default=False)
+    memo = Column(Text)  # 인플루언서 메모
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     
@@ -521,6 +522,8 @@ class CampaignReelCollectionJob(Base):
     # 수집된 데이터
     user_posted = Column(String(255))  # 계정명
     video_play_count = Column(Integer)  # 재생 수
+    likes_count = Column(Integer)  # 좋아요 수
+    comments_count = Column(Integer)  # 댓글 수
     thumbnail_url = Column(Text)  # 원본 썸네일 URL
     s3_thumbnail_url = Column(Text)  # S3에 저장된 썸네일 URL
     
@@ -548,6 +551,8 @@ class CampaignReelCollectionJob(Base):
             "priority": self.priority,
             "user_posted": self.user_posted,
             "video_play_count": self.video_play_count,
+            "likes_count": self.likes_count,
+            "comments_count": self.comments_count,
             "thumbnail_url": self.thumbnail_url,
             "s3_thumbnail_url": self.s3_thumbnail_url,
             "error_message": self.error_message,

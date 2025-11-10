@@ -1104,22 +1104,24 @@ async def update_manual_classification_summary(
             if not override_payload:
                 continue
 
+            # 기존 레코드 조회
             override = (
                 db.query(InfluencerClassificationOverride)
                 .filter(
                     InfluencerClassificationOverride.profile_id == profile.id,
-                    InfluencerClassificationOverride.classification_type
-                    == classification_type,
+                    InfluencerClassificationOverride.classification_type == classification_type,
                 )
                 .first()
             )
 
             if override:
+                # 기존 레코드 업데이트
                 override.primary_classification = override_payload.primary_label
                 override.primary_percentage = override_payload.primary_percentage
                 override.secondary_classification = override_payload.secondary_label
                 override.secondary_percentage = override_payload.secondary_percentage
             else:
+                # 새 레코드 생성
                 override = InfluencerClassificationOverride(
                     profile_id=profile.id,
                     classification_type=classification_type,

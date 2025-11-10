@@ -112,14 +112,14 @@ const Navigation: React.FC = () => {
       </ToggleButton>
       
       <NavSection>
-        <SectionTitle $isCollapsed={isCollapsed}>관리자 메뉴</SectionTitle>
+        <SectionTitle $isCollapsed={isCollapsed}>캠페인 관리</SectionTitle>
         <NavItem to="/admin/dashboard" $isActive={isActive('/admin/dashboard')} $isCollapsed={isCollapsed}>
           <BarChart2 size={16} />
-          <span>대시보드</span>
+          <span>전체 캠페인</span>
         </NavItem>
         <NavItem to="/admin/campaigns" $isActive={isActive('/admin/campaigns')} $isCollapsed={isCollapsed}>
           <Settings size={16} />
-          <span>캠페인 관리</span>
+          <span>캠페인 등록/수정</span>
         </NavItem>
         <NavItem to="/admin/campaign-collection-status" $isActive={isActive('/admin/campaign-collection-status')} $isCollapsed={isCollapsed}>
           <Activity size={16} />
@@ -133,17 +133,9 @@ const Navigation: React.FC = () => {
           <Download size={16} />
           <span>수집</span>
         </NavItem>
-        <NavItem to="/admin/influencer/explore" $isActive={isActive('/admin/influencer/explore')} $isCollapsed={isCollapsed}>
-          <Search size={16} />
-          <span>탐색</span>
-        </NavItem>
         <NavItem to="/admin/influencer/classification" $isActive={isActive('/admin/influencer/classification')} $isCollapsed={isCollapsed}>
           <Tag size={16} />
-          <span>구독동기/카테고리 분류</span>
-        </NavItem>
-        <NavItem to="/admin/influencer/prompt" $isActive={isActive('/admin/influencer/prompt')} $isCollapsed={isCollapsed}>
-          <MessageSquare size={16} />
-          <span>프롬프트 관리</span>
+          <span>구독동기 및 카테고리</span>
         </NavItem>
         <NavItem to="/admin/influencer/analysis" $isActive={isActive('/admin/influencer/analysis')} $isCollapsed={isCollapsed}>
           <PieChart size={16} />
@@ -152,7 +144,7 @@ const Navigation: React.FC = () => {
       </NavSection>
       
       <NavSection>
-        <SectionTitle $isCollapsed={isCollapsed}>보고서 바로가기</SectionTitle>
+        <SectionTitle $isCollapsed={isCollapsed}>캠페인 보고서</SectionTitle>
         <NavItem to="/report/instagram-reel" $isActive={isActive('/report/instagram-reel')} $isCollapsed={isCollapsed}>
           <Video size={16} />
           <span>인스타그램 캠페인</span>
@@ -160,6 +152,14 @@ const Navigation: React.FC = () => {
         <NavItem to="/report/blog" $isActive={isActive('/report/blog')} $isCollapsed={isCollapsed}>
           <Edit3 size={16} />
           <span>네이버 블로그</span>
+        </NavItem>
+      </NavSection>
+      
+      <NavSection>
+        <SectionTitle $isCollapsed={isCollapsed}>기타</SectionTitle>
+        <NavItem to="/admin/influencer/prompt" $isActive={isActive('/admin/influencer/prompt')} $isCollapsed={isCollapsed}>
+          <MessageSquare size={16} />
+          <span>프롬프트 관리</span>
         </NavItem>
       </NavSection>
     </NavContainer>

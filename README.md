@@ -134,11 +134,106 @@ chmod +x setup_cron.sh
 
 ## 자동 데이터 수집
 
-시스템은 매일 오전 9시에 자동으로 활성 캠페인의 데이터를 수집합니다:
+시스템은 **매일 KST 오전 9시**에 자동으로 활성 캠페인의 데이터를 수집합니다.
+
+### 실행 방식
+
+자동 수집은 두 가지 방식으로 동작합니다:
+
+1. **외부 Cron Job** (`backend/cron_job.py`)
+   - 시스템 crontab에 등록되어 매 시간마다 실행
+   - 스크립트 내부에서 KST 시간을 확인하여 KST 오전 9시일 때만 실제 수집 작업 수행
+   - 서버 시간대와 무관하게 KST 기준으로 동작
+
+2. **내부 백그라운드 스케줄러** (`CampaignScheduleRunner`)
+   - FastAPI 애플리케이션 시작 시 백그라운드 스레드로 실행
+   - 1시간마다 확인하며, KST 오전 9시일 때만 실행
+   - 서버 재시작 없이도 동작 가능
+
+### 실행 흐름
+
+```
+1. Cron Job 실행 또는 백그라운드 스케줄러 트리거
+   ↓
+2. KST 시간 확인 (오전 9시인지 체크)
+   ↓
+3. SchedulerService.run_scheduled_collection() 호출
+   ↓
+4. 활성 스케줄 조회
+   - is_active == True
+   - 오늘 날짜(KST 기준)가 start_date ~ end_date 범위 내
+   ↓
+5. 각 스케줄에 대해 _process_schedule() 실행
+   ↓
+6. 중복 수집 방지 체크
+   - 오늘 날짜에 이미 수집된 데이터가 있는지 확인
+   - 있으면 스킵
+   ↓
+7. 채널별 수집 실행
+   - Instagram Reel: _collect_campaign_instagram_reels()
+   - Instagram Post: _collect_campaign_instagram_posts()
+   - Blog: _collect_campaign_blogs()
+```
+
+### 수집 항목
 
 1. **인스타그램 게시물**: 사용자별 최신 24개 게시물 썸네일 수집
 2. **인스타그램 릴스**: 사용자별 최신 24개 릴스 썸네일 수집
 3. **블로그**: 게시물 정보 및 네이버 검색 순위 수집
+
+### 릴스 수집 상세 과정
+
+#### 특정 릴스 URL인 경우 (`/reel/` 포함):
+1. **신규 수집 작업 생성**: `CampaignReelCollectionService`를 통해 `campaign_reel_collection_jobs` 테이블에 작업 생성
+2. **BrightData로 전송**: 대기 중인 작업을 BrightData API로 전송
+3. **수집 완료 대기 및 처리**: 30초 대기 후 `CollectionWorker`가 BrightData 응답 처리 및 데이터 저장
+4. **캠페인 테이블 동기화**: 완료된 작업을 `campaign_instagram_reels` 테이블로 동기화 (등급, 분류 결과 포함)
+
+#### 사용자 프로필 URL인 경우:
+1. **프로필 조회**: `InfluencerProfile`에서 사용자 정보 조회
+2. **최신 릴스 가져오기**: `InfluencerReel`에서 최신 10개 릴스 조회
+3. **캠페인 테이블에 추가**: 기존 데이터가 없으면 `campaign_instagram_reels`에 추가
+
+### 중복 방지 로직
+
+- 각 스케줄 처리 시 오늘 날짜(`collection_date`, KST 기준)에 이미 수집된 데이터가 있는지 확인
+- 이미 수집된 데이터가 있으면 스킵하여 중복 수집 방지
+- 모든 시간은 KST(UTC+9) 기준으로 처리
+
+### 데이터베이스 구조
+
+#### `collection_schedules` 테이블
+- `campaign_id`: 캠페인 ID
+- `channel`: 채널 타입 (instagram_reel, instagram_post, blog)
+- `campaign_url`: 수집 대상 URL
+- `start_date`, `end_date`: 수집 기간
+- `is_active`: 활성화 여부
+
+#### 수집 결과 저장
+- Instagram Reel → `campaign_instagram_reels`
+- Instagram Post → `campaign_instagram_posts`
+- Blog → `campaign_blogs`
+
+### Cron Job 설정
+
+```bash
+# Cron job 설정 스크립트 실행
+cd backend
+chmod +x setup_cron.sh
+./setup_cron.sh
+```
+
+이 스크립트는 다음을 수행합니다:
+- 매 시간마다 `cron_job.py`를 실행하도록 crontab에 등록
+- 스크립트 내부에서 KST 오전 9시인지 확인하여 실제 수집 작업 수행
+- 서버 시간대와 무관하게 KST 기준으로 동작
+
+### 특징
+
+- **시간대 독립적**: 모든 시간은 KST(UTC+9) 기준으로 처리되며, 서버 시간대와 무관하게 동작
+- **에러 처리**: 개별 스케줄 실패 시에도 다음 스케줄 계속 처리
+- **자동 등급 계산**: 릴스 수집 시 인플루언서 등급 자동 계산
+- **분류 결과 연동**: `influencer_reels`의 분류 결과를 캠페인 데이터에 포함
 
 ## 문제 해결
 

@@ -16,7 +16,7 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
-  timeout: 30000,
+  timeout: 60000, // 60초로 증가 (대량 데이터 조회 시 타임아웃 방지)
 });
 
 // Campaigns API
@@ -109,6 +109,12 @@ export const adminApi = {
   
   retryFailedCollectionJobs: (): Promise<{ message: string; retried_count: number }> =>
     api.post('/admin/retry-failed-collection-jobs').then(res => res.data),
+  
+  checkTodayCollection: (campaignId: number): Promise<{ has_today_data: boolean; today_count: number; today_date: string }> =>
+    api.get(`/admin/check-today-collection/${campaignId}`).then(res => res.data),
+  
+  immediateCollection: (campaignId: number): Promise<{ message: string; has_today_data: boolean; today_count: number; skipped: boolean; processed_schedules?: number }> =>
+    api.post(`/admin/immediate-collection/${campaignId}`).then(res => res.data),
   
   retrySelectedInfluencerJobs: (jobIds: string[]): Promise<{ success: boolean; message: string; retried_count: number }> =>
     api.post('/influencer/collection-jobs/retry', jobIds).then(res => res.data),

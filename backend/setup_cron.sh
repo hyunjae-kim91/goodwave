@@ -18,11 +18,14 @@ fi
 chmod +x "$CRON_SCRIPT"
 
 # 현재 사용자의 crontab에 작업 추가
-# 매일 오전 9시에 실행
-(crontab -l 2>/dev/null || echo "") | grep -v "$CRON_SCRIPT" | { cat; echo "0 9 * * * $PYTHON_PATH $CRON_SCRIPT >> /var/log/goodwave_cron.log 2>&1"; } | crontab -
+# 매 시간마다 실행 (스크립트 내부에서 KST 오전 9시인지 확인)
+# KST 오전 9시 = UTC 자정 (UTC+9이므로)
+# 서버 시간대와 무관하게 KST 기준으로 동작하도록 매 시간마다 체크
+(crontab -l 2>/dev/null || echo "") | grep -v "$CRON_SCRIPT" | { cat; echo "0 * * * * $PYTHON_PATH $CRON_SCRIPT >> /var/log/goodwave_cron.log 2>&1"; } | crontab -
 
 echo "Cron job has been set up successfully!"
-echo "The data collection will run daily at 9:00 AM"
+echo "The data collection will run daily at 9:00 AM KST (Korea Standard Time)"
+echo "The script checks KST time internally, regardless of server timezone"
 echo "Log file: /var/log/goodwave_cron.log"
 echo ""
 echo "To view current crontab:"

@@ -76,7 +76,10 @@ export interface InstagramReel {
   follower_count: number;
   s3_thumbnail_url: string;
   video_view_count: number;
+  likes_count?: number;
+  comments_count?: number;
   subscription_motivation: string;
+  account_subscription_motivation?: string;  // 계정별 구독 동기 상위 1위
   category: string;
   grade: string;
   grade_avg_views?: number;

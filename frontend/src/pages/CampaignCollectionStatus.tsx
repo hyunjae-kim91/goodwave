@@ -1,7 +1,23 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import styled from 'styled-components';
 import { adminApi } from '../services/api';
-import { formatDateTimeKST } from '../utils/dateUtils';
+import { formatDateTimeKST, getTodayKST } from '../utils/dateUtils';
+import { RefreshCw } from 'lucide-react';
+
+// 날짜를 YYYY-mm-dd 형식으로 포맷팅
+const formatDateOnly = (dateString?: string): string => {
+  if (!dateString) return '-';
+  try {
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  } catch {
+    return '-';
+  }
+};
+
 
 interface CollectionJob {
   id: number;
@@ -10,6 +26,8 @@ interface CollectionJob {
   status: 'pending' | 'processing' | 'completed' | 'failed';
   user_posted?: string;
   video_play_count?: number;
+  likes_count?: number;
+  comments_count?: number;
   thumbnail_url?: string;
   s3_thumbnail_url?: string;
   date_posted?: string;
@@ -24,6 +42,8 @@ interface CampaignCollectionStatus {
   campaign_name?: string;
   campaign_type?: string;
   product?: string;
+  start_date?: string;
+  end_date?: string;
   total_jobs: number;
   status_counts: {
     pending: number;
@@ -307,10 +327,22 @@ const CampaignCollectionStatus: React.FC = () => {
   const [selectedCampaign, setSelectedCampaign] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [controlsExpanded, setControlsExpanded] = useState(false);
+  const [checkingToday, setCheckingToday] = useState(false);
+  const [collecting, setCollecting] = useState(false);
+  const [todayDataInfo, setTodayDataInfo] = useState<{ has_today_data: boolean; today_count: number; today_date: string } | null>(null);
 
   useEffect(() => {
     fetchData();
   }, []);
+
+  useEffect(() => {
+    // 캠페인이 선택되면 오늘 날짜 데이터 확인
+    if (selectedCampaign) {
+      checkTodayData();
+    } else {
+      setTodayDataInfo(null);
+    }
+  }, [selectedCampaign]);
 
   useEffect(() => {
     if (!data) return;
@@ -550,6 +582,84 @@ const CampaignCollectionStatus: React.FC = () => {
     return url;
   };
 
+  const checkTodayData = async () => {
+    if (!selectedCampaign) return;
+    
+    try {
+      setCheckingToday(true);
+      const campaignId = parseInt(selectedCampaign);
+      const result = await adminApi.checkTodayCollection(campaignId);
+      setTodayDataInfo(result);
+    } catch (err) {
+      console.error('Error checking today data:', err);
+      setTodayDataInfo(null);
+    } finally {
+      setCheckingToday(false);
+    }
+  };
+
+  const handleImmediateCollection = async () => {
+    if (!selectedCampaign) {
+      alert('캠페인을 선택해주세요.');
+      return;
+    }
+
+    try {
+      setCollecting(true);
+      const campaignId = parseInt(selectedCampaign);
+      const result = await adminApi.immediateCollection(campaignId);
+      
+      if (result.skipped) {
+        alert(result.message);
+      } else {
+        // 즉시 수집 시작 메시지
+        alert(result.message + '\n\n수집 작업이 큐에 추가되었습니다. 아래 표에서 작업 상태를 확인할 수 있습니다.');
+        
+        // 수집 후 데이터 새로고침 및 오늘 날짜 데이터 재확인
+        await fetchData();
+        await checkTodayData();
+        
+        // 작업이 처리될 때까지 주기적으로 새로고침 (최대 30초)
+        let refreshCount = 0;
+        const maxRefreshes = 6; // 5초마다 6번 = 30초
+        
+        const refreshInterval = setInterval(async () => {
+          refreshCount++;
+          const freshData = await adminApi.getCampaignCollectionStatus() as CollectionStatusResponse;
+          
+          // 선택된 캠페인의 pending이나 processing 작업이 있는지 확인
+          const campaignId = parseInt(selectedCampaign);
+          const campaign = freshData.campaigns.find((c: CampaignCollectionStatus) => c.campaign_id === campaignId);
+          
+          if (campaign) {
+            const hasPendingOrProcessing = campaign.jobs.some((job: CollectionJob) => 
+              job.status === 'pending' || job.status === 'processing'
+            );
+            
+            if (!hasPendingOrProcessing || refreshCount >= maxRefreshes) {
+              clearInterval(refreshInterval);
+              await fetchData(); // 최종 새로고침
+              await checkTodayData();
+            } else {
+              // 데이터 업데이트
+              setData(freshData);
+            }
+          } else if (refreshCount >= maxRefreshes) {
+            clearInterval(refreshInterval);
+            await fetchData();
+            await checkTodayData();
+          }
+        }, 5000); // 5초마다 새로고침
+      }
+    } catch (err: any) {
+      const errorMessage = err.response?.data?.detail || '즉시 수집 중 오류가 발생했습니다.';
+      alert(errorMessage);
+      console.error('Error in immediate collection:', err);
+    } finally {
+      setCollecting(false);
+    }
+  };
+
   if (loading) return <Loading>로딩 중...</Loading>;
   if (error) return <Loading>{error}</Loading>;
   if (!data) return <Loading>데이터가 없습니다.</Loading>;
@@ -561,6 +671,22 @@ const CampaignCollectionStatus: React.FC = () => {
       <Title>캠페인 수집 조회</Title>
 
       <FilterSection>
+        {selectedCampaign && todayDataInfo && (
+          <div style={{ 
+            marginBottom: '1rem', 
+            padding: '0.75rem', 
+            backgroundColor: todayDataInfo.has_today_data ? '#d4edda' : '#fff3cd',
+            border: `1px solid ${todayDataInfo.has_today_data ? '#c3e6cb' : '#ffeaa7'}`,
+            borderRadius: '4px',
+            color: todayDataInfo.has_today_data ? '#155724' : '#856404',
+            fontSize: '0.9rem'
+          }}>
+            {todayDataInfo.has_today_data 
+              ? `✅ 오늘(${todayDataInfo.today_date}) ${todayDataInfo.today_count}개의 릴스 데이터가 이미 수집되어 있습니다.`
+              : `ℹ️ 오늘(${todayDataInfo.today_date}) 수집된 데이터가 없습니다. 즉시 수집 버튼을 클릭하여 수집을 시작하세요.`
+            }
+          </div>
+        )}
         <FilterGrid>
           <FilterGroup>
             <FilterLabel>캠페인 선택</FilterLabel>
@@ -592,7 +718,15 @@ const CampaignCollectionStatus: React.FC = () => {
           </FilterGroup>
           
           <div>
-            {/* 빈 공간 */}
+            {selectedCampaign && (
+              <ProcessButton 
+                onClick={handleImmediateCollection} 
+                disabled={collecting || checkingToday}
+                style={{ width: '100%' }}
+              >
+                {collecting ? '수집 중...' : checkingToday ? '확인 중...' : '즉시 수집'}
+              </ProcessButton>
+            )}
           </div>
         </FilterGrid>
       </FilterSection>
@@ -696,8 +830,30 @@ const CampaignCollectionStatus: React.FC = () => {
             <CampaignTitle>
               {campaign.campaign_name || `캠페인 ${campaign.campaign_id}`}
               {campaign.product && ` - ${campaign.product}`}
+              {campaign.start_date && campaign.end_date && (
+                <span style={{ 
+                  fontSize: '0.9rem', 
+                  fontWeight: 'normal', 
+                  color: '#6c757d',
+                  marginLeft: '0.5rem'
+                }}>
+                  ({formatDateOnly(campaign.start_date)} ~ {formatDateOnly(campaign.end_date)})
+                </span>
+              )}
             </CampaignTitle>
           </CampaignHeader>
+
+          <div style={{ 
+            marginBottom: '1rem', 
+            padding: '0.75rem', 
+            backgroundColor: '#e7f3ff',
+            border: '1px solid #b3d9ff',
+            borderRadius: '4px',
+            fontSize: '0.9rem',
+            color: '#004085'
+          }}>
+            📋 <strong>캠페인 릴스 수집 큐</strong> - 아래 표에서 수집 작업 상태를 확인할 수 있습니다.
+          </div>
 
           <StatusGrid>
             <StatusCard>
@@ -726,20 +882,118 @@ const CampaignCollectionStatus: React.FC = () => {
             </StatusCard>
           </StatusGrid>
 
-          {campaign.jobs && campaign.jobs.length > 0 && (
-            <JobsTable>
-              <thead>
-                <tr>
-                  <TableHeader>릴스 URL</TableHeader>
-                  <TableHeader>상태</TableHeader>
-                  <TableHeader>계정명</TableHeader>
-                  <TableHeader>재생수</TableHeader>
-                  <TableHeader>썸네일</TableHeader>
-                  <TableHeader>게시일자</TableHeader>
-                  <TableHeader>완료일시</TableHeader>
-                  <TableHeader>오류 메시지</TableHeader>
-                </tr>
-              </thead>
+          {campaign.jobs && campaign.jobs.length > 0 ? (
+            <>
+              {/* 캠페인 기간 내 없는 날짜 데이터 표시 (수집 작업 목록 위) */}
+              {campaign.start_date && campaign.end_date && (() => {
+                const startDate = new Date(campaign.start_date);
+                const endDate = new Date(campaign.end_date);
+                const todayKST = getTodayKST();
+                const datesWithData = new Set<string>();
+                
+                // 수집된 작업의 수집일자(completed_at) 추출
+                campaign.jobs.forEach(job => {
+                  if (job.completed_at) {
+                    const collectionDate = new Date(job.completed_at);
+                    const dateStr = formatDateOnly(collectionDate.toISOString());
+                    datesWithData.add(dateStr);
+                  }
+                });
+                
+                // 캠페인 기간 내 모든 날짜 생성
+                const allDates: string[] = [];
+                const currentDate = new Date(startDate);
+                while (currentDate <= endDate) {
+                  const dateStr = formatDateOnly(currentDate.toISOString());
+                  // 오늘 날짜(KST)보다 뒤의 날짜는 제외
+                  if (dateStr <= todayKST) {
+                    allDates.push(dateStr);
+                  }
+                  currentDate.setDate(currentDate.getDate() + 1);
+                }
+                
+                // 없는 날짜 찾기
+                const missingDates = allDates.filter(date => !datesWithData.has(date));
+                
+                if (missingDates.length > 0) {
+                  return (
+                    <div style={{ 
+                      marginTop: '1rem',
+                      marginBottom: '1rem',
+                      padding: '1rem',
+                      backgroundColor: '#fff3cd',
+                      border: '1px solid #ffc107',
+                      borderRadius: '4px',
+                      fontSize: '0.9rem',
+                      color: '#856404'
+                    }}>
+                      <strong>⚠️ 캠페인 기간 내 데이터 없음:</strong>
+                      <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {missingDates.map(date => (
+                          <span 
+                            key={date}
+                            style={{
+                              padding: '0.25rem 0.5rem',
+                              backgroundColor: '#fff',
+                              border: '1px solid #ffc107',
+                              borderRadius: '4px',
+                              fontSize: '0.85rem'
+                            }}
+                          >
+                            {date}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                }
+                return null;
+              })()}
+              
+              <div style={{ 
+                marginTop: '1rem', 
+                marginBottom: '0.5rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <div style={{ 
+                  fontSize: '0.9rem',
+                  fontWeight: '600',
+                  color: '#495057'
+                }}>
+                  수집 작업 목록 ({campaign.jobs.length}개)
+                </div>
+                <RefreshButton 
+                  onClick={fetchData} 
+                  disabled={loading}
+                  style={{ 
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.875rem'
+                  }}
+                >
+                  <RefreshCw size={16} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
+                  새로고침
+                </RefreshButton>
+              </div>
+              <JobsTable>
+                <thead>
+                  <tr>
+                    <TableHeader>릴스 URL</TableHeader>
+                    <TableHeader>상태</TableHeader>
+                    <TableHeader>계정명</TableHeader>
+                    <TableHeader>좋아요 수</TableHeader>
+                    <TableHeader>댓글 수</TableHeader>
+                    <TableHeader>재생수</TableHeader>
+                    <TableHeader>썸네일</TableHeader>
+                    <TableHeader>게시일자</TableHeader>
+                    <TableHeader>수집일자</TableHeader>
+                    <TableHeader>오류 메시지</TableHeader>
+                  </tr>
+                </thead>
               <tbody>
                 {campaign.jobs.map(job => (
                   <tr key={job.id}>
@@ -771,6 +1025,16 @@ const CampaignCollectionStatus: React.FC = () => {
                       ) : '-'}
                     </TableCell>
                     <TableCell>
+                      {job.likes_count !== undefined && job.likes_count !== null 
+                        ? job.likes_count.toLocaleString() 
+                        : 'N/A'}
+                    </TableCell>
+                    <TableCell>
+                      {job.comments_count !== undefined && job.comments_count !== null 
+                        ? job.comments_count.toLocaleString() 
+                        : 'N/A'}
+                    </TableCell>
+                    <TableCell>
                       {job.video_play_count ? job.video_play_count.toLocaleString() : '-'}
                     </TableCell>
                     <TableCell>
@@ -790,10 +1054,10 @@ const CampaignCollectionStatus: React.FC = () => {
                       )}
                     </TableCell>
                     <TableCell>
-                      {job.date_posted ? formatDateTimeKST(job.date_posted) : formatDateTimeKST(job.created_at)}
+                      {job.date_posted ? formatDateOnly(job.date_posted) : formatDateOnly(job.created_at)}
                     </TableCell>
                     <TableCell>
-                      {job.completed_at ? formatDateTimeKST(job.completed_at) : '-'}
+                      {job.completed_at ? formatDateOnly(job.completed_at) : '-'}
                     </TableCell>
                     <TableCell>
                       {job.error_message ? (
@@ -806,6 +1070,18 @@ const CampaignCollectionStatus: React.FC = () => {
                 ))}
               </tbody>
             </JobsTable>
+            </>
+          ) : (
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '2rem', 
+              color: '#7f8c8d',
+              backgroundColor: '#f8f9fa',
+              borderRadius: '4px',
+              marginTop: '1rem'
+            }}>
+              수집 작업이 없습니다. 즉시 수집 버튼을 클릭하여 수집을 시작하세요.
+            </div>
           )}
         </CampaignSection>
         ))

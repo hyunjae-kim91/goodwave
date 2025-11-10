@@ -44,7 +44,7 @@ const InfluencerAnalysis: React.FC<InfluencerAnalysisProps> = ({ activeTab = 'in
       case 'explore':
         return '탐색';
       case 'combined-classification':
-        return '구독동기/카테고리 분류';
+        return '구독동기 및 카테고리';
       case 'prompt':
         return '프롬프트 관리';
       case 'overall-analysis':

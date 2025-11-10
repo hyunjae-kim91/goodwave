@@ -1,7 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
+from pydantic import BaseModel
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from ..models.influencer_models import DeleteUsersRequest
 from ..services.influencer_service import InfluencerService
@@ -114,7 +115,8 @@ async def get_user_data(username: str, db: Session = Depends(get_db)):
             "email_address": profile.email_address,
             "is_business_account": profile.is_business_account,
             "is_professional_account": profile.is_professional_account,
-            "is_verified": profile.is_verified
+            "is_verified": profile.is_verified,
+            "memo": profile.memo
         }
         
         posts_data = []
@@ -201,7 +203,8 @@ async def get_user_profile_data(username: str, db: Session = Depends(get_db)):
             "email_address": profile.email_address,
             "is_business_account": profile.is_business_account,
             "is_professional_account": profile.is_professional_account,
-            "is_verified": profile.is_verified
+            "is_verified": profile.is_verified,
+            "memo": profile.memo
         }
         
         return profile_data
@@ -288,7 +291,8 @@ async def get_user_analysis_data(username: str, db: Session = Depends(get_db)):
             "email_address": profile.email_address,
             "is_business_account": profile.is_business_account,
             "is_professional_account": profile.is_professional_account,
-            "is_verified": profile.is_verified
+            "is_verified": profile.is_verified,
+            "memo": profile.memo
         }
         
         reels_data = []
@@ -329,4 +333,41 @@ async def get_user_analysis_data(username: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail={
             "error": f"사용자 분석 데이터 조회 중 오류가 발생했습니다: {str(e)}", 
             "code": "ANALYSIS_DATA_ERROR"
+        })
+
+class MemoUpdateRequest(BaseModel):
+    memo: Optional[str] = None
+
+@router.put("/influencer/files/user-profile/{username}/memo")
+async def update_user_memo(
+    username: str, 
+    request: MemoUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """인플루언서 프로필의 메모를 업데이트합니다."""
+    try:
+        influencer_service = InfluencerService(db)
+        
+        profile = influencer_service.get_profile_by_username(username)
+        if not profile:
+            raise HTTPException(status_code=404, detail=f"사용자 {username}의 프로필 데이터를 찾을 수 없습니다")
+        
+        profile.memo = request.memo
+        db.commit()
+        db.refresh(profile)
+        
+        return {
+            "username": username,
+            "memo": profile.memo,
+            "message": "메모가 업데이트되었습니다"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"메모 업데이트 중 오류: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail={
+            "error": f"메모 업데이트 중 오류가 발생했습니다: {str(e)}", 
+            "code": "MEMO_UPDATE_ERROR"
         })

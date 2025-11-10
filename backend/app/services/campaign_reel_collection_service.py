@@ -334,6 +334,8 @@ class CampaignReelCollectionService:
                 # 인플루언서 서비스 방식으로 견고한 데이터 추출
                 user_posted = self._extract_user_posted(reel_data)
                 video_play_count = self._extract_video_play_count(reel_data)
+                likes_count = self._extract_likes_count(reel_data)
+                comments_count = self._extract_comments_count(reel_data)
                 thumbnail_url = self._extract_thumbnail_url(reel_data)
                 
                 # 썸네일 이미지를 S3에 업로드
@@ -343,6 +345,8 @@ class CampaignReelCollectionService:
                 
                 job.user_posted = user_posted
                 job.video_play_count = video_play_count
+                job.likes_count = likes_count
+                job.comments_count = comments_count
                 job.thumbnail_url = thumbnail_url
                 job.s3_thumbnail_url = s3_thumbnail_url
                 job.status = "completed"
@@ -385,6 +389,46 @@ class CampaignReelCollectionService:
                 return value.strip()
         
         logger.warning(f"⚠️ No username found in reel data. Available fields: {list(reel_data.keys())}")
+        return None
+    
+    def _extract_likes_count(self, reel_data: dict) -> Optional[int]:
+        """좋아요 수 추출"""
+        possible_fields = [
+            "likes", "likes_count", "like_count", "num_likes",
+            "edge_liked_by", "edge_media_preview_like"
+        ]
+        for field in possible_fields:
+            value = reel_data.get(field)
+            if value is not None:
+                if isinstance(value, dict):
+                    count = value.get("count")
+                    if count is not None:
+                        return int(count)
+                elif isinstance(value, (int, str)):
+                    try:
+                        return int(value)
+                    except (ValueError, TypeError):
+                        continue
+        return None
+    
+    def _extract_comments_count(self, reel_data: dict) -> Optional[int]:
+        """댓글 수 추출"""
+        possible_fields = [
+            "comments", "comments_count", "comment_count", "num_comments",
+            "edge_media_to_comment", "edge_media_to_parent_comment"
+        ]
+        for field in possible_fields:
+            value = reel_data.get(field)
+            if value is not None:
+                if isinstance(value, dict):
+                    count = value.get("count")
+                    if count is not None:
+                        return int(count)
+                elif isinstance(value, (int, str)):
+                    try:
+                        return int(value)
+                    except (ValueError, TypeError):
+                        continue
         return None
     
     def _extract_video_play_count(self, reel_data: dict) -> int:
@@ -566,13 +610,19 @@ class CampaignReelCollectionService:
         finally:
             db.close()
     
-    def get_campaign_collection_status(self, campaign_id: int) -> Dict:
+    def get_campaign_collection_status(self, campaign_id: int, limit_jobs: int = 1000) -> Dict:
         """캠페인의 수집 현황 조회"""
         db = SessionLocal()
         try:
-            jobs = db.query(CampaignReelCollectionJob).filter(
+            from sqlalchemy import func
+            
+            # 집계 쿼리로 상태별 개수 계산 (성능 최적화)
+            status_counts_query = db.query(
+                CampaignReelCollectionJob.status,
+                func.count(CampaignReelCollectionJob.id).label('count')
+            ).filter(
                 CampaignReelCollectionJob.campaign_id == campaign_id
-            ).all()
+            ).group_by(CampaignReelCollectionJob.status).all()
             
             status_counts = {
                 "pending": 0,
@@ -581,12 +631,19 @@ class CampaignReelCollectionService:
                 "failed": 0
             }
             
-            for job in jobs:
-                status_counts[job.status] += 1
+            total_jobs = 0
+            for status, count in status_counts_query:
+                status_counts[status] = count
+                total_jobs += count
+            
+            # 작업 목록은 최신순으로 제한된 개수만 조회 (성능 최적화)
+            jobs = db.query(CampaignReelCollectionJob).filter(
+                CampaignReelCollectionJob.campaign_id == campaign_id
+            ).order_by(CampaignReelCollectionJob.created_at.desc()).limit(limit_jobs).all()
             
             return {
                 "campaign_id": campaign_id,
-                "total_jobs": len(jobs),
+                "total_jobs": total_jobs,
                 "status_counts": status_counts,
                 "jobs": [job.to_dict() for job in jobs]
             }
@@ -597,23 +654,67 @@ class CampaignReelCollectionService:
         finally:
             db.close()
     
-    def get_all_campaigns_collection_status(self) -> List[Dict]:
-        """모든 캠페인의 수집 현황 조회"""
+    def get_all_campaigns_collection_status(self, limit_jobs_per_campaign: int = 500) -> List[Dict]:
+        """모든 캠페인의 수집 현황 조회 (성능 최적화 및 연결 풀 최적화)"""
         db = SessionLocal()
         try:
-            # 캠페인별로 그룹화하여 현황 조회
-            campaigns = db.query(CampaignReelCollectionJob.campaign_id).distinct().all()
+            from sqlalchemy import func
             
-            results = []
-            for (campaign_id,) in campaigns:
-                status = self.get_campaign_collection_status(campaign_id)
-                if status:
-                    results.append(status)
+            # 1. 캠페인별로 그룹화하여 현황 조회 (집계 쿼리 사용) - 단일 쿼리
+            campaign_statuses = db.query(
+                CampaignReelCollectionJob.campaign_id,
+                CampaignReelCollectionJob.status,
+                func.count(CampaignReelCollectionJob.id).label('count')
+            ).group_by(
+                CampaignReelCollectionJob.campaign_id,
+                CampaignReelCollectionJob.status
+            ).all()
             
-            return results
+            # 캠페인별로 상태 집계
+            campaign_data = {}
+            campaign_ids = set()
+            for campaign_id, status, count in campaign_statuses:
+                campaign_ids.add(campaign_id)
+                if campaign_id not in campaign_data:
+                    campaign_data[campaign_id] = {
+                        "campaign_id": campaign_id,
+                        "total_jobs": 0,
+                        "status_counts": {
+                            "pending": 0,
+                            "processing": 0,
+                            "completed": 0,
+                            "failed": 0
+                        },
+                        "jobs": []
+                    }
+                
+                campaign_data[campaign_id]["status_counts"][status] = count
+                campaign_data[campaign_id]["total_jobs"] += count
+            
+            # 2. 모든 캠페인의 최신 작업을 단일 쿼리로 조회 (연결 풀 최적화)
+            if campaign_ids:
+                # 모든 작업을 한 번에 조회 (연결 풀 사용 최소화)
+                all_jobs = db.query(CampaignReelCollectionJob).filter(
+                    CampaignReelCollectionJob.campaign_id.in_(campaign_ids)
+                ).order_by(
+                    CampaignReelCollectionJob.campaign_id,
+                    CampaignReelCollectionJob.created_at.desc()
+                ).all()
+                
+                # 캠페인별로 작업 분류 및 제한
+                for job in all_jobs:
+                    campaign_id = job.campaign_id
+                    if campaign_id in campaign_data:
+                        # 각 캠페인별로 제한된 개수만 추가
+                        if len(campaign_data[campaign_id]["jobs"]) < limit_jobs_per_campaign:
+                            campaign_data[campaign_id]["jobs"].append(job.to_dict())
+            
+            return list(campaign_data.values())
             
         except Exception as e:
             logger.error(f"Error getting all campaigns collection status: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
         finally:
             db.close()

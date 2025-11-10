@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func
 from typing import Dict, List, Any, Optional
-from collections import defaultdict
+from collections import defaultdict, Counter
 from datetime import datetime
 
 from app.db.database import get_db
@@ -221,6 +221,13 @@ async def get_unified_instagram_report(
             
             username = latest_job.user_posted
             
+            # reel_url에서 reel_id 추출 (초기화)
+            reel_id = None
+            if '/reel/' in reel_url:
+                parts = reel_url.split('/reel/')
+                if len(parts) > 1:
+                    reel_id = parts[1].split('/')[0].split('?')[0]
+            
             # 인플루언서 프로필 조회
             profile = None
             display_name = username
@@ -261,23 +268,121 @@ async def get_unified_instagram_report(
             subscription_motivation = None
             category = None
             
-            # reel_url에서 reel_id 추출
-            reel_id = None
-            if '/reel/' in reel_url:
-                parts = reel_url.split('/reel/')
-                if len(parts) > 1:
-                    reel_id = parts[1].split('/')[0].split('?')[0]
+            # 계정별 집계된 구독 동기/카테고리 조회 (aggregated-summary와 동일한 로직 사용)
+            if profile and username:
+                from app.services.influencer_service import InfluencerService
+                from app.services.openai_service import OpenAIService
+                from sqlalchemy import func
+                influencer_service = InfluencerService(db)
+                openai_service = OpenAIService(db)
+                
+                # aggregated-summary와 동일한 우선순위로 집계 결과 조회
+                # 1순위: InfluencerClassificationSummary 테이블 기반 집계
+                try:
+                    # 최신 job_id 조회
+                    motivation_job_id = db.query(
+                        func.max(models.InfluencerReel.subscription_motivation_job_id)
+                    ).filter(
+                        models.InfluencerReel.profile_id == profile.id
+                    ).scalar()
+                    
+                    category_job_id = db.query(
+                        func.max(models.InfluencerReel.category_job_id)
+                    ).filter(
+                        models.InfluencerReel.profile_id == profile.id
+                    ).scalar()
+                    
+                    # 구독 동기 집계
+                    try:
+                        has_motivation_summary = False
+                        if motivation_job_id is not None:
+                            has_motivation_summary = True
+                        else:
+                            summary_check = db.query(models.InfluencerClassificationSummary.id).filter(
+                                models.InfluencerClassificationSummary.profile_id == profile.id,
+                                models.InfluencerClassificationSummary.motivation.isnot(None)
+                            ).first()
+                            has_motivation_summary = summary_check is not None
+                        
+                        if has_motivation_summary:
+                            motivation_summary = openai_service.aggregate_classification_results(
+                                username,
+                                motivation_job_id,
+                                "subscription_motivation"
+                            )
+                            if motivation_summary and not motivation_summary.get("error"):
+                                subscription_motivation = motivation_summary.get("primary_classification")
+                    except Exception as e:
+                        print(f"⚠️ '{username}' 구독 동기 집계 실패: {str(e)}")
+                    
+                    # 카테고리 집계
+                    try:
+                        has_category_summary = False
+                        if category_job_id is not None:
+                            has_category_summary = True
+                        else:
+                            summary_check = db.query(models.InfluencerClassificationSummary.id).filter(
+                                models.InfluencerClassificationSummary.profile_id == profile.id,
+                                models.InfluencerClassificationSummary.category.isnot(None)
+                            ).first()
+                            has_category_summary = summary_check is not None
+                        
+                        if has_category_summary:
+                            category_summary = openai_service.aggregate_classification_results(
+                                username,
+                                category_job_id,
+                                "category"
+                            )
+                            if category_summary and not category_summary.get("error"):
+                                category = category_summary.get("primary_classification")
+                    except Exception as e:
+                        print(f"⚠️ '{username}' 카테고리 집계 실패: {str(e)}")
+                except Exception as e:
+                    import traceback
+                    print(f"⚠️ '{username}' 집계 결과 조회 실패: {str(e)}")
+                    traceback.print_exc()
+                
+                # 2순위: InfluencerAnalysis 테이블 사용 (집계 결과가 없을 경우)
+                if not subscription_motivation:
+                    motivation_analysis = influencer_service.get_analysis_result(
+                        profile.id, 
+                        "subscription_motivation"
+                    )
+                    if motivation_analysis and motivation_analysis.analysis_result:
+                        result = motivation_analysis.analysis_result
+                        if isinstance(result, dict):
+                            subscription_motivation = (
+                                result.get("primary_motivation") or 
+                                result.get("primary_classification") or 
+                                result.get("classification")
+                            )
+                
+                if not category:
+                    category_analysis = influencer_service.get_analysis_result(
+                        profile.id, 
+                        "category"
+                    )
+                    if category_analysis and category_analysis.analysis_result:
+                        result = category_analysis.analysis_result
+                        if isinstance(result, dict):
+                            category = (
+                                result.get("primary_category") or 
+                                result.get("primary_classification") or 
+                                result.get("classification")
+                            )
             
+            # 3순위: 집계 결과가 없으면 개별 릴스 데이터에서 가져오기
+            if not subscription_motivation or not category:
             # 인플루언서 릴스 데이터에서 분류 정보 가져오기
-            if reel_id and profile:
-                influencer_reel = db.query(models.InfluencerReel).filter(
-                    models.InfluencerReel.reel_id == reel_id,
-                    models.InfluencerReel.profile_id == profile.id
-                ).first()
+                if reel_id and profile:
+                    influencer_reel = db.query(models.InfluencerReel).filter(
+                        models.InfluencerReel.reel_id == reel_id,
+                        models.InfluencerReel.profile_id == profile.id
+                    ).first()
                 
                 if influencer_reel:
-                    subscription_motivation = influencer_reel.subscription_motivation
-                    category = influencer_reel.category
+                        subscription_motivation = subscription_motivation or influencer_reel.subscription_motivation
+                        category = category or influencer_reel.category
             
             # 안전하게 job_metadata 접근
             posted_at = None
@@ -293,6 +398,8 @@ async def get_unified_instagram_report(
                 'follower_count': follower_count,
                 's3_thumbnail_url': latest_job.s3_thumbnail_url,
                 'video_view_count': latest_job.video_play_count or 0,
+                'likes_count': latest_job.likes_count,
+                'comments_count': latest_job.comments_count,
                 'subscription_motivation': subscription_motivation,
                 'category': category,
                 'grade': username_grades.get(username) if username else None,
@@ -309,6 +416,13 @@ async def get_unified_instagram_report(
             print(f"📝 릴스 추가: {reel_url} (조회수: {latest_job.video_play_count}, 등급: {reel_data['grade']})")
         
         print(f"🔄 최종 릴스 개수: {len(reels_list)}개")
+        
+        # 각 계정별 구독 동기 상위 1위 계산 (집계 결과 우선 사용)
+        # InfluencerAnalysis 테이블의 집계 결과를 이미 사용했으므로, account_subscription_motivation은 subscription_motivation과 동일
+        # 각 릴스 데이터에 계정별 구독 동기 추가 (이미 집계 결과가 반영된 subscription_motivation 사용)
+        for reel in reels_list:
+            # 집계 결과가 이미 subscription_motivation에 반영되었으므로 동일하게 사용
+            reel['account_subscription_motivation'] = reel.get('subscription_motivation')
         
         # 릴스별 일자별 조회수 차트 데이터 생성
         chart_data_by_reel = {}

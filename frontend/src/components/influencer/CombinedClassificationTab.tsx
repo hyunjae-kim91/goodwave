@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import styled from 'styled-components';
 import toast from 'react-hot-toast';
-import { Search, RefreshCw, Play, Database, BarChart3, CheckCircle, Trash2 } from 'lucide-react';
+import { Search, RefreshCw, Play, Database, BarChart3, CheckCircle, Trash2, Eye, X, PlayCircle, Users, User } from 'lucide-react';
+import { influencerApi, UserDetail } from '../../services/influencer/influencerApi';
 import {
   classificationService,
   ClassificationJobItem,
@@ -19,6 +20,8 @@ interface UserData {
   hasPosts: boolean;
   hasReels?: boolean;
   lastModified?: number;
+  isClassified?: boolean; // 릴스 분류 여부
+  followers?: number | null; // 팔로워 수 (null이면 프로필 없음)
 }
 
 interface SummaryTopEntry {
@@ -303,20 +306,6 @@ const EmptyPlaceholder = styled.div`
   color: #6c757d;
 `;
 
-const ListButton = styled.button`
-  width: 100%;
-  text-align: left;
-  padding: 0.75rem;
-  font-size: 0.875rem;
-  border: none;
-  border-bottom: 1px solid #dee2e6;
-  background: white;
-  cursor: pointer;
-
-  &:hover {
-    background: #f8f9fa;
-  }
-`;
 
 // formatDateTime 함수는 utils/dateUtils.ts의 formatDateTimeKST로 대체됨
 
@@ -474,20 +463,247 @@ const formatTopEntriesLine = (entries: SummaryTopEntry[]) =>
 
 const getUserStatusText = (user: UserData) => {
   const status: string[] = [];
-  if (user.hasProfile) status.push('프로필');
+  if (user.followers !== null && user.followers !== undefined) status.push('프로필');
   if (user.hasPosts) status.push('게시물');
   if (user.hasReels) status.push('릴스');
   return status.length > 0 ? status.join(', ') : '데이터 없음';
 };
 
+// 팝업 모달 스타일
+const ModalOverlay = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+`;
+
+const ModalContent = styled.div`
+  background: white;
+  border-radius: 8px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  position: relative;
+`;
+
+const ModalHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid #dee2e6;
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 10;
+`;
+
+const ModalTitle = styled.h3`
+  margin: 0;
+  color: #2c3e50;
+  font-size: 1.25rem;
+  font-weight: 600;
+`;
+
+const ModalCloseButton = styled.button`
+  background: none;
+  border: none;
+  color: #6c757d;
+  cursor: pointer;
+  padding: 0.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  
+  &:hover {
+    color: #495057;
+  }
+`;
+
+const ModalBody = styled.div`
+  padding: 1.5rem;
+`;
+
+const DetailGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+`;
+
+const DetailCard = styled.div`
+  background: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+  padding: 1rem;
+`;
+
+const DetailLabel = styled.div`
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6c757d;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.35rem;
+`;
+
+const DetailValue = styled.div`
+  font-size: 0.95rem;
+  color: #2c3e50;
+  font-weight: 500;
+  word-break: break-word;
+`;
+
+const BioBox = styled.div`
+  background: #f5f7fb;
+  border-radius: 8px;
+  border: 1px solid #dde4f0;
+  padding: 1rem;
+  font-size: 0.9rem;
+  color: #495057;
+  line-height: 1.6;
+  margin-bottom: 1.5rem;
+`;
+
+const ReelTableWrapper = styled.div`
+  overflow-x: auto;
+  border: 1px solid #e9ecef;
+  border-radius: 8px;
+`;
+
+const ReelTable = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+
+  th,
+  td {
+    padding: 0.75rem;
+    border-bottom: 1px solid #f1f3f5;
+    vertical-align: middle;
+  }
+
+  thead {
+    background: #f8f9fa;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    color: #6c757d;
+    letter-spacing: 0.04em;
+  }
+`;
+
+const ReelPreview = styled.img`
+  display: block;
+  width: 88px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid #dee2e6;
+  background: #f8f9fa;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+`;
+
+const ReelPreviewFallback = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 120px;
+  border-radius: 8px;
+  border: 1px dashed #ced4da;
+  background: #f8f9fa;
+  color: #adb5bd;
+  font-size: 0.75rem;
+  text-align: center;
+  padding: 0.5rem;
+`;
+
+const ReelCaptionContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+`;
+
+const ReelCaptionText = styled.div`
+  color: #212529;
+  line-height: 1.4;
+  word-break: break-word;
+`;
+
+const EmptyState = styled.div`
+  text-align: center;
+  padding: 2rem;
+  color: #6c757d;
+  background: #f8f9fa;
+  border-radius: 8px;
+`;
+
+const StatGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+`;
+
+const StatCard = styled.div`
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+  padding: 1.5rem;
+  text-align: center;
+
+  &.blue {
+    background-color: #e3f2fd;
+    border-color: #2196f3;
+  }
+
+  &.green {
+    background-color: #e8f5e8;
+    border-color: #4caf50;
+  }
+
+  &.orange {
+    background-color: #fff3e0;
+    border-color: #ff9800;
+  }
+
+  &.purple {
+    background-color: #f3e5f5;
+    border-color: #9c27b0;
+  }
+`;
+
+const StatValue = styled.div`
+  font-size: 2rem;
+  font-weight: bold;
+  color: #2c3e50;
+  margin-bottom: 0.5rem;
+`;
+
+const StatLabel = styled.div`
+  font-size: 0.875rem;
+  color: #6c757d;
+`;
+
 const CombinedClassificationTab: React.FC = () => {
   const [users, setUsers] = useState<UserData[]>([]);
   const [isLoadingUsers, setIsLoadingUsers] = useState(false);
   const [selectedUser, setSelectedUser] = useState<string | null>(null);
-  const [topSearch, setTopSearch] = useState('');
   const [userSearch, setUserSearch] = useState('');
   const [selectedUsersForClassification, setSelectedUsersForClassification] = useState<string[]>([]);
   const [bulkClassifying, setBulkClassifying] = useState(false);
+  const [detailViewUser, setDetailViewUser] = useState<UserDetail | null>(null);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [detailViewUserSummary, setDetailViewUserSummary] = useState<CombinedSummary | null>(null);
+  const [detailViewUserReels, setDetailViewUserReels] = useState<IndividualReelClassificationResponse | null>(null);
 
   const [classificationJobs, setClassificationJobs] = useState<ClassificationJobItem[]>([]);
   const [selectedJobIds, setSelectedJobIds] = useState<string[]>([]);
@@ -505,9 +721,8 @@ const CombinedClassificationTab: React.FC = () => {
   const [showIndividualReels, setShowIndividualReels] = useState(false);
   const [deletingReelIds, setDeletingReelIds] = useState<number[]>([]);
   const [queueExpanded, setQueueExpanded] = useState(false);
-  const [bulkProcessExpanded, setBulkProcessExpanded] = useState(false);
-  const [quickSelectExpanded, setQuickSelectExpanded] = useState(false);
-  const [promptExpanded, setPromptExpanded] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   const filteredUsers = useMemo(() => {
     const term = userSearch.trim().toLowerCase();
@@ -517,11 +732,11 @@ const CombinedClassificationTab: React.FC = () => {
     return users.filter(user => user.username.toLowerCase().includes(term));
   }, [users, userSearch]);
 
-  const topFilteredUsers = useMemo(() => {
-    const term = topSearch.trim().toLowerCase();
-    const source = term ? users.filter(user => user.username.toLowerCase().includes(term)) : users;
-    return source.slice(0, 10);
-  }, [users, topSearch]);
+  // 페이지네이션: 검색어 변경 시 첫 페이지로 리셋
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [userSearch]);
+
 
   const loadUsers = async () => {
     try {
@@ -531,7 +746,41 @@ const CombinedClassificationTab: React.FC = () => {
         throw new Error('사용자 목록을 불러오지 못했습니다');
       }
       const data = await response.json();
-      setUsers(Array.isArray(data.users) ? data.users : []);
+      const usersList = Array.isArray(data.users) ? data.users : [];
+      
+      // 각 사용자의 분류 상태 확인
+      const usersWithClassificationStatus = await Promise.all(
+        usersList.map(async (user: UserData) => {
+          try {
+            // 개별 릴스 분류 결과 확인
+            const classificationResponse = await fetch(`/api/influencer/individual-reels/${user.username}`);
+            if (classificationResponse.ok) {
+              const classificationData = await classificationResponse.json();
+              // 릴스가 있고, 분류된 릴스가 있는지 확인
+              // subscription_motivation 또는 category에 classification 필드가 있으면 분류됨
+              const hasClassifiedReels = classificationData.reels && classificationData.reels.some((reel: any) => {
+                const hasMotivation = reel.subscription_motivation && (
+                  reel.subscription_motivation.classification || 
+                  reel.subscription_motivation.label ||
+                  reel.subscription_motivation.result
+                );
+                const hasCategory = reel.category && (
+                  reel.category.classification || 
+                  reel.category.label ||
+                  reel.category.result
+                );
+                return hasMotivation || hasCategory;
+              });
+              return { ...user, isClassified: hasClassifiedReels || false };
+            }
+            return { ...user, isClassified: false };
+          } catch {
+            return { ...user, isClassified: false };
+          }
+        })
+      );
+      
+      setUsers(usersWithClassificationStatus);
     } catch (error) {
       console.error(error);
       toast.error('사용자 목록을 불러오는데 실패했습니다');
@@ -823,6 +1072,247 @@ const CombinedClassificationTab: React.FC = () => {
     }
   };
 
+  const selectUnclassifiedUsers = () => {
+    const unclassifiedUsers = filteredUsers.filter(u => !u.isClassified).map(u => u.username);
+    setSelectedUsersForClassification(unclassifiedUsers);
+  };
+
+  // 상세보기 로드 함수
+  const loadUserDetail = async (username: string) => {
+    try {
+      setLoadingDetail(true);
+      const data = await influencerApi.getUserData(username);
+      setDetailViewUser(data);
+      
+      // 주요 구독 동기와 카테고리 정보 로드
+      await loadCombinedSummaryForDetailView(username);
+      
+      // 개별 릴스 분류 결과 로드
+      await loadIndividualReelClassificationsForDetailView(username);
+    } catch (error) {
+      console.error('사용자 상세 정보 로드 실패:', error);
+      toast.error('사용자 상세 정보를 불러오는데 실패했습니다');
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  // 상세보기용 주요 구독 동기/카테고리 로드
+  const loadCombinedSummaryForDetailView = async (username: string) => {
+    try {
+      const [aggregatedResult, combinedResult] = await Promise.allSettled([
+        classificationService.getAggregatedClassificationSummary(username),
+        fetch(`/api/influencer/files/combined-classification/${username}`).then((res) =>
+          res.ok ? res.json() : null,
+        ),
+      ]);
+
+      const aggregatedData =
+        aggregatedResult.status === 'fulfilled' ? aggregatedResult.value : null;
+      const combinedData = combinedResult.status === 'fulfilled' ? combinedResult.value : null;
+
+      const summaryPayload =
+        combinedData && Array.isArray(combinedData.results) && combinedData.results.length > 0
+          ? combinedData.results[0]
+          : null;
+
+      const motivationDetails = isRecord(summaryPayload?.motivation_details)
+        ? (summaryPayload.motivation_details as Record<string, unknown>)
+        : undefined;
+      const categoryDetails = isRecord(summaryPayload?.category_details)
+        ? (summaryPayload.category_details as Record<string, unknown>)
+        : undefined;
+
+      const aggregatedSummaries = aggregatedData?.aggregated_summaries ?? {};
+      const motivationAggregated = aggregatedSummaries['subscription_motivation'];
+      const categoryAggregated = aggregatedSummaries['category'];
+
+      let motivationTop = extractTopEntriesFromDistribution(
+        motivationAggregated?.classification_distribution,
+      );
+      if (!motivationTop.length && motivationAggregated) {
+        motivationTop = buildTopEntriesFromFallback(
+          motivationAggregated as unknown as Record<string, unknown>,
+          motivationAggregated.primary_classification,
+          motivationAggregated.secondary_classification ?? undefined,
+          motivationAggregated.primary_percentage,
+          motivationAggregated.secondary_percentage,
+          motivationAggregated.statistics?.successful_classifications ||
+            motivationAggregated.statistics?.total_reels_processed,
+        );
+      }
+      if (!motivationTop.length && summaryPayload) {
+        motivationTop = buildTopEntriesFromFallback(
+          motivationDetails,
+          typeof summaryPayload.motivation === 'string' ? summaryPayload.motivation : undefined,
+          typeof summaryPayload.motivation_secondary === 'string'
+            ? summaryPayload.motivation_secondary
+            : undefined,
+          summaryPayload.motivation_confidence,
+          (motivationDetails as Record<string, any> | undefined)?.secondary_percentage,
+        );
+      }
+
+      let categoryTop = extractTopEntriesFromDistribution(
+        categoryAggregated?.classification_distribution,
+      );
+      if (!categoryTop.length && categoryAggregated) {
+        categoryTop = buildTopEntriesFromFallback(
+          categoryAggregated as unknown as Record<string, unknown>,
+          categoryAggregated.primary_classification,
+          categoryAggregated.secondary_classification ?? undefined,
+          categoryAggregated.primary_percentage,
+          categoryAggregated.secondary_percentage,
+          categoryAggregated.statistics?.successful_classifications ||
+            categoryAggregated.statistics?.total_reels_processed,
+        );
+      }
+      if (!categoryTop.length && summaryPayload) {
+        categoryTop = buildTopEntriesFromFallback(
+          categoryDetails,
+          typeof summaryPayload.category === 'string' ? summaryPayload.category : undefined,
+          typeof summaryPayload.category_secondary === 'string'
+            ? summaryPayload.category_secondary
+            : undefined,
+          summaryPayload.category_confidence,
+          (categoryDetails as Record<string, any> | undefined)?.secondary_percentage,
+        );
+      }
+
+      if (!motivationTop.length && !categoryTop.length && !summaryPayload) {
+        setDetailViewUserSummary(null);
+        return;
+      }
+
+      setDetailViewUserSummary({
+        motivationTop,
+        categoryTop,
+        motivation_details: motivationDetails,
+        category_details: categoryDetails,
+        overall_analysis: summaryPayload?.overall_analysis ?? null,
+        timestamp: motivationAggregated?.processed_at ??
+          motivationAggregated?.timestamp ??
+          categoryAggregated?.processed_at ??
+          categoryAggregated?.timestamp ??
+          summaryPayload?.timestamp ??
+          undefined,
+      });
+    } catch (error) {
+      console.error('주요 구독 동기/카테고리 로드 실패:', error);
+      setDetailViewUserSummary(null);
+    }
+  };
+
+  // 상세보기용 개별 릴스 분류 결과 로드
+  const loadIndividualReelClassificationsForDetailView = async (username: string) => {
+    try {
+      const data = await classificationService.getIndividualReelClassifications(username);
+      setDetailViewUserReels(data);
+    } catch (error) {
+      console.error('개별 릴스 분류 결과 로드 실패:', error);
+      setDetailViewUserReels(null);
+    }
+  };
+
+  // 숫자 포맷팅 함수
+  const formatNumber = (num?: number): string => {
+    if (num === undefined || num === null) return '0';
+    if (num >= 10000) {
+      return `${(num / 10000).toFixed(1)}만`;
+    }
+    return num.toString();
+  };
+
+  // 날짜 포맷팅 함수
+  const formatDate = (value?: string): string => {
+    if (!value) return '-';
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toISOString().slice(0, 10);
+    }
+    return value.slice(0, 10);
+  };
+
+  // 캡션 포맷팅 함수
+  const removeS3Urls = (text: string): string => {
+    const s3Pattern = /https?:\/\/[\w.-]*s3[\w.-]*\.[^\s)]+/gi;
+    return text.replace(s3Pattern, '').replace(/\s{2,}/g, ' ').trim();
+  };
+
+  const formatCaption = (caption?: string): string => {
+    if (!caption) return '-';
+    const sanitized = removeS3Urls(caption);
+    if (!sanitized) return '-';
+    return sanitized.length > 120 ? `${sanitized.slice(0, 117)}...` : sanitized;
+  };
+
+  // 미디어 URL 포맷팅
+  const formatMediaUrl = (url: string): string => {
+    try {
+      const parsed = new URL(url);
+      const host = parsed.hostname.replace(/^www\./, '');
+      const path = parsed.pathname && parsed.pathname !== '/' ? parsed.pathname : '';
+      const truncatedPath = path.length > 32 ? `${path.slice(0, 29)}...` : path;
+      const query = parsed.search ? '?' : '';
+      return `${host}${truncatedPath}${query}` || host;
+    } catch (error) {
+      const safeUrl = url.trim();
+      return safeUrl.length > 40 ? `${safeUrl.slice(0, 37)}...` : safeUrl;
+    }
+  };
+
+  // 릴스 데이터 처리
+  const reels = detailViewUser?.reels ?? [];
+  const getReelDateValue = (reel: any): number => {
+    const rawDate = reel.date_posted || reel.timestamp;
+    if (!rawDate) return 0;
+    const parsed = new Date(rawDate);
+    return Number.isNaN(parsed.getTime()) ? 0 : parsed.getTime();
+  };
+  const sortedReels = useMemo(() => {
+    if (!Array.isArray(reels)) return [];
+    return [...reels].sort((a, b) => getReelDateValue(b) - getReelDateValue(a));
+  }, [reels]);
+
+  const isS3Url = (url: string): boolean => /s3[.-]/i.test(url);
+
+  const getPrimaryMediaUrl = (reel: any): string | undefined => {
+    const mediaUrls: string[] = Array.isArray(reel.mediaUrls) ? reel.mediaUrls : [];
+    const legacyMedia = reel.media_urls;
+    const legacyMediaUrls: string[] = Array.isArray(legacyMedia) ? legacyMedia : [];
+    const photoUrls: string[] = Array.isArray(reel.photos) ? reel.photos : [];
+    return [...mediaUrls, ...legacyMediaUrls, ...photoUrls].find((candidate) => {
+      return typeof candidate === 'string' && candidate.trim().length > 0;
+    });
+  };
+
+  const getReelPreviewUrl = (reel: any): string | undefined => {
+    const mediaUrls: string[] = Array.isArray(reel.mediaUrls) ? reel.mediaUrls : [];
+    const legacyMedia = reel.media_urls;
+    const legacyMediaUrls: string[] = Array.isArray(legacyMedia) ? legacyMedia : [];
+    const photoUrls: string[] = Array.isArray(reel.photos) ? reel.photos : [];
+    const candidates = [
+      reel.thumbnail_url,
+      ...mediaUrls,
+      ...legacyMediaUrls,
+      ...photoUrls
+    ].filter(Boolean) as string[];
+
+    if (!candidates.length) {
+      return undefined;
+    }
+
+    const imageCandidate = candidates.find((url) => {
+      const normalized = url.split('?')[0].toLowerCase();
+      return /(\.jpg|\.jpeg|\.png|\.webp|\.gif)$/.test(normalized);
+    });
+
+    return imageCandidate || candidates.find((url) => {
+      if (typeof url !== 'string' || !url.trim()) return false;
+      return isS3Url(url);
+    });
+  };
+
   const handleDeleteUserResults = async () => {
     if (!selectedUser) {
       toast.error('삭제할 사용자를 먼저 선택하세요.');
@@ -948,16 +1438,57 @@ const CombinedClassificationTab: React.FC = () => {
   const motivationSummaryText = formatTopEntriesLine(motivationTopEntries);
   const categorySummaryText = formatTopEntriesLine(categoryTopEntries);
 
+  // 통계 계산
+  const totalUsers = users.length;
+  const usersWithProfile = users.filter(u => u.followers !== null && u.followers !== undefined).length;
+  const usersWithReels = users.filter(u => u.hasReels).length;
+  const classifiedUsers = users.filter(u => u.isClassified).length;
+
   return (
     <Container>
       <Section>
-        <SectionTitle>구독동기/카테고리 분류</SectionTitle>
+        <SectionTitle>구독동기 및 카테고리</SectionTitle>
         <p style={{ fontSize: '0.875rem', color: '#6c757d', marginBottom: '1rem' }}>
           분류 작업은 백그라운드 큐에서 순차적으로 실행됩니다. 완료된 작업은 자동으로 숨겨집니다.
         </p>
         {message && (
           <AlertBox className={message.type === 'error' ? 'error' : undefined}>{message.text}</AlertBox>
         )}
+        
+        {/* 통계 카드 */}
+        <StatGrid>
+          <StatCard className="blue">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
+              <Users size={32} style={{ color: '#2196f3' }} />
+            </div>
+            <StatValue style={{ color: '#2196f3' }}>{totalUsers}</StatValue>
+            <StatLabel>총 사용자</StatLabel>
+          </StatCard>
+          
+          <StatCard className="green">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
+              <User size={32} style={{ color: '#4caf50' }} />
+            </div>
+            <StatValue style={{ color: '#4caf50' }}>{usersWithProfile}</StatValue>
+            <StatLabel>프로필 있음</StatLabel>
+          </StatCard>
+          
+          <StatCard className="orange">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
+              <PlayCircle size={32} style={{ color: '#ff9800' }} />
+            </div>
+            <StatValue style={{ color: '#ff9800' }}>{usersWithReels}</StatValue>
+            <StatLabel>릴스 있음</StatLabel>
+          </StatCard>
+          
+          <StatCard className="purple">
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
+              <BarChart3 size={32} style={{ color: '#9c27b0' }} />
+            </div>
+            <StatValue style={{ color: '#9c27b0' }}>{classifiedUsers}</StatValue>
+            <StatLabel>분류 사용자 수</StatLabel>
+          </StatCard>
+        </StatGrid>
       </Section>
 
       <Section>
@@ -1034,14 +1565,38 @@ const CombinedClassificationTab: React.FC = () => {
       </Section>
 
       <Section>
-        <SectionTitle 
-          onClick={() => setBulkProcessExpanded(!bulkProcessExpanded)} 
-          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          <span>{bulkProcessExpanded ? '▼' : '▶'}</span>
-          사용자 선택 및 일괄 처리
-        </SectionTitle>
-        {bulkProcessExpanded && (<>
+        <div style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+          <label htmlFor="prompt-selector" style={{ fontSize: '0.9rem', color: '#495057', fontWeight: 600 }}>
+            프롬프트 선택
+          </label>
+          <select
+            id="prompt-selector"
+            value={selectedPromptType}
+            onChange={(event) => handlePromptTypeChange(event.target.value)}
+            disabled={promptTypes.length === 0}
+            style={{
+              padding: '0.5rem 0.75rem',
+              borderRadius: '4px',
+              border: '1px solid #ced4da',
+              fontSize: '0.9rem',
+              color: '#495057',
+              minWidth: '12rem',
+            }}
+          >
+            {promptTypes.length === 0 ? (
+              <option value="" disabled>
+                저장된 프롬프트가 없습니다
+              </option>
+            ) : (
+              promptTypes.map(type => (
+                <option key={type} value={type}>{type}</option>
+              ))
+            )}
+          </select>
+          <Button $variant="secondary" onClick={loadPromptTypes}>
+            <RefreshCw size={16} /> 새로고침
+          </Button>
+        </div>
         <SearchContainer style={{ marginBottom: '1rem' }}>
           <div style={{ position: 'relative', flex: 1 }}>
             <Search
@@ -1066,6 +1621,10 @@ const CombinedClassificationTab: React.FC = () => {
             <CheckCircle size={16} />
             {selectedUsersForClassification.length === filteredUsers.length && filteredUsers.length > 0 ? '전체 해제' : '전체 선택'}
           </Button>
+          <Button onClick={selectUnclassifiedUsers} $variant="secondary">
+            <CheckCircle size={16} />
+            미분류만 선택
+          </Button>
           <Button onClick={bulkRunCombined} disabled={bulkClassifying || selectedUsersForClassification.length === 0 || !systemPrompt}>
             <Play size={16} />
             {bulkClassifying ? '분류 중...' : `일괄 분류 (${selectedUsersForClassification.length})`}
@@ -1078,11 +1637,14 @@ const CombinedClassificationTab: React.FC = () => {
               <tr>
                 <SelectionHeadCell style={{ width: '2.25rem' }}>선택</SelectionHeadCell>
                 <SelectionHeadCell>사용자명</SelectionHeadCell>
-                <SelectionHeadCell>데이터 상태</SelectionHeadCell>
+                <SelectionHeadCell>프로필</SelectionHeadCell>
+                <SelectionHeadCell>릴스</SelectionHeadCell>
+                <SelectionHeadCell>분류 상태</SelectionHeadCell>
+                <SelectionHeadCell>상세보기</SelectionHeadCell>
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.map(user => (
+              {filteredUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map(user => (
                 <SelectionRow key={user.username}>
                   <SelectionCell>
                     <input
@@ -1098,7 +1660,57 @@ const CombinedClassificationTab: React.FC = () => {
                       @{user.username}
                     </div>
                   </SelectionCell>
-                  <SelectionCell>{getUserStatusText(user)}</SelectionCell>
+                  <SelectionCell>
+                    <span style={{
+                      padding: '0.25rem 0.5rem',
+                      fontSize: '0.75rem',
+                      fontWeight: '600',
+                      borderRadius: '9999px',
+                      background: (user.followers !== null && user.followers !== undefined) ? '#e8f5e8' : '#ffebee',
+                      color: (user.followers !== null && user.followers !== undefined) ? '#4caf50' : '#f44336'
+                    }}>
+                      {(user.followers !== null && user.followers !== undefined) ? '있음' : '없음'}
+                    </span>
+                  </SelectionCell>
+                  <SelectionCell>
+                    <span style={{
+                      padding: '0.25rem 0.5rem',
+                      fontSize: '0.75rem',
+                      fontWeight: '600',
+                      borderRadius: '9999px',
+                      background: user.hasReels ? '#e8f5e8' : '#ffebee',
+                      color: user.hasReels ? '#4caf50' : '#f44336'
+                    }}>
+                      {user.hasReels ? '있음' : '없음'}
+                    </span>
+                  </SelectionCell>
+                  <SelectionCell>
+                    {user.isClassified ? (
+                      <span style={{ color: '#28a745', fontWeight: 600 }}>분류됨</span>
+                    ) : (
+                      <span style={{ color: '#dc3545', fontWeight: 600 }}>미분류</span>
+                    )}
+                  </SelectionCell>
+                  <SelectionCell>
+                    <button
+                      onClick={() => loadUserDetail(user.username)}
+                      disabled={loadingDetail}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        color: '#3498db',
+                        background: 'none',
+                        border: 'none',
+                        cursor: loadingDetail ? 'not-allowed' : 'pointer',
+                        fontSize: '0.875rem',
+                        opacity: loadingDetail ? 0.6 : 1
+                      }}
+                    >
+                      <Eye size={16} />
+                      상세보기
+                    </button>
+                  </SelectionCell>
                 </SelectionRow>
               ))}
             </tbody>
@@ -1111,111 +1723,29 @@ const CombinedClassificationTab: React.FC = () => {
             <p>{userSearch ? '검색 결과가 없습니다.' : '사용자 목록이 없습니다.'}</p>
           </EmptyPlaceholder>
         )}
-        </>)}
-      </Section>
 
-      <Section>
-        <SectionTitle 
-          onClick={() => setQuickSelectExpanded(!quickSelectExpanded)} 
-          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          <span>{quickSelectExpanded ? '▼' : '▶'}</span>
-          사용자 빠른 선택
-        </SectionTitle>
-        {quickSelectExpanded && (<>
-        <SearchContainer>
-          <div style={{ position: 'relative', flex: 1 }}>
-            <Search
-              style={{
-                position: 'absolute',
-                left: '0.75rem',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                width: '1rem',
-                height: '1rem',
-                color: '#6c757d',
-              }}
-            />
-            <SearchInput
-              type="text"
-              value={topSearch}
-              onChange={(event) => setTopSearch(event.target.value)}
-              placeholder="@username 검색..."
-            />
-          </div>
-          <Button $variant="secondary" onClick={loadUsers} disabled={isLoadingUsers}>
-            <RefreshCw size={16} style={{ animation: isLoadingUsers ? 'spin 1s linear infinite'  : 'none' }} />
-            {isLoadingUsers ? '로딩...' : '새로고침'}
-          </Button>
-        </SearchContainer>
-        <div style={{ maxHeight: '10rem', overflowY: 'auto', border: '1px solid #dee2e6', borderRadius: '4px', marginTop: '1rem' }}>
-          {topFilteredUsers.length === 0 && (
-            <div style={{ padding: '0.75rem', fontSize: '0.875rem', color: '#6c757d' }}>검색 결과가 없습니다.</div>
-          )}
-          {topFilteredUsers.map(user => (
-            <ListButton
-              key={user.username}
-              style={{ background: selectedUser === user.username ? '#e3f2fd' : 'white' }}
-              onClick={() => setSelectedUser(user.username)}
+        {/* 페이지네이션 */}
+        {filteredUsers.length > itemsPerPage && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
+            <Button
+              $variant="secondary"
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
             >
-              @{user.username}
-              <span style={{ marginLeft: '0.5rem', fontSize: '0.75rem', color: '#6c757d' }}>
-                {getUserStatusText(user)}
-              </span>
-            </ListButton>
-          ))}
-        </div>
-        </>)}
-      </Section>
-
-      <Section>
-        <SectionTitle 
-          onClick={() => setPromptExpanded(!promptExpanded)} 
-          style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-        >
-          <span>{promptExpanded ? '▼' : '▶'}</span>
-          저장된 프롬프트
-        </SectionTitle>
-        {promptExpanded && (<>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-            <label htmlFor="prompt-selector" style={{ fontSize: '0.9rem', color: '#495057', fontWeight: 600 }}>
-              사용할 프롬프트
-            </label>
-            <select
-              id="prompt-selector"
-              value={selectedPromptType}
-              onChange={(event) => handlePromptTypeChange(event.target.value)}
-              disabled={promptTypes.length === 0}
-              style={{
-                padding: '0.5rem 0.75rem',
-                borderRadius: '4px',
-                border: '1px solid #ced4da',
-                fontSize: '0.9rem',
-                color: '#495057',
-                minWidth: '12rem',
-              }}
+              이전
+            </Button>
+            <span style={{ fontSize: '0.875rem', color: '#495057' }}>
+              {currentPage} / {Math.ceil(filteredUsers.length / itemsPerPage)}
+            </span>
+            <Button
+              $variant="secondary"
+              onClick={() => setCurrentPage(prev => Math.min(Math.ceil(filteredUsers.length / itemsPerPage), prev + 1))}
+              disabled={currentPage >= Math.ceil(filteredUsers.length / itemsPerPage)}
             >
-              {promptTypes.length === 0 ? (
-                <option value="" disabled>
-                  저장된 프롬프트가 없습니다
-                </option>
-              ) : (
-                promptTypes.map(type => (
-                  <option key={type} value={type}>{type}</option>
-                ))
-              )}
-            </select>
-            <Button $variant="secondary" onClick={loadPromptTypes}>
-              <RefreshCw size={16} /> 프롬프트 새로고침
+              다음
             </Button>
           </div>
-          <Button onClick={runCombined} disabled={!selectedUser || !systemPrompt}>
-            <Play size={16} /> 통합 분류 실행
-          </Button>
-        </div>
-        <PromptBox>{systemPrompt || '저장된 프롬프트가 없습니다.'}</PromptBox>
-        </>)}
+        )}
       </Section>
 
       {selectedUser && (
@@ -1471,6 +2001,235 @@ const CombinedClassificationTab: React.FC = () => {
             </EmptyPlaceholder>
           )}
         </Section>
+      )}
+
+      {/* 상세보기 팝업 모달 */}
+      {detailViewUser && (
+        <ModalOverlay onClick={() => {
+          setDetailViewUser(null);
+          setDetailViewUserSummary(null);
+          setDetailViewUserReels(null);
+        }}>
+          <ModalContent onClick={(e) => e.stopPropagation()}>
+            <ModalHeader>
+              <ModalTitle>@{detailViewUser.username} 상세 정보</ModalTitle>
+              <ModalCloseButton onClick={() => {
+                setDetailViewUser(null);
+                setDetailViewUserSummary(null);
+                setDetailViewUserReels(null);
+              }}>
+                <X size={20} />
+              </ModalCloseButton>
+            </ModalHeader>
+            <ModalBody>
+              {/* 주요 구독 동기 및 카테고리 */}
+              {detailViewUserSummary && (
+                <div style={{ marginBottom: '2rem' }}>
+                  <h4 style={{ fontWeight: '600', marginBottom: '1rem' }}>주요 분류 결과</h4>
+                  <DetailGrid>
+                    <DetailCard>
+                      <DetailLabel>주요 구독 동기</DetailLabel>
+                      <DetailValue>
+                        {detailViewUserSummary.motivationTop.length > 0
+                          ? formatTopEntriesLine(detailViewUserSummary.motivationTop)
+                          : '데이터 없음'}
+                      </DetailValue>
+                    </DetailCard>
+                    <DetailCard>
+                      <DetailLabel>주요 카테고리</DetailLabel>
+                      <DetailValue>
+                        {detailViewUserSummary.categoryTop.length > 0
+                          ? formatTopEntriesLine(detailViewUserSummary.categoryTop)
+                          : '데이터 없음'}
+                      </DetailValue>
+                    </DetailCard>
+                  </DetailGrid>
+                </div>
+              )}
+
+              {/* 프로필 정보 */}
+              {detailViewUser.profile && (
+                <div style={{ marginBottom: '2rem' }}>
+                  <h4 style={{ fontWeight: '600', marginBottom: '1rem' }}>프로필 정보</h4>
+                  <DetailGrid>
+                    <DetailCard>
+                      <DetailLabel>계정</DetailLabel>
+                      <DetailValue>@{detailViewUser.profile.username}</DetailValue>
+                    </DetailCard>
+                    {detailViewUser.profile.profile_name && (
+                      <DetailCard>
+                        <DetailLabel>닉네임</DetailLabel>
+                        <DetailValue>{detailViewUser.profile.profile_name}</DetailValue>
+                      </DetailCard>
+                    )}
+                    {detailViewUser.profile.category_name && (
+                      <DetailCard>
+                        <DetailLabel>카테고리</DetailLabel>
+                        <DetailValue>{detailViewUser.profile.category_name}</DetailValue>
+                      </DetailCard>
+                    )}
+                    {detailViewUser.profile.posts_count !== undefined && (
+                      <DetailCard>
+                        <DetailLabel>누적 게시물</DetailLabel>
+                        <DetailValue>{formatNumber(detailViewUser.profile.posts_count)}</DetailValue>
+                      </DetailCard>
+                    )}
+                    {detailViewUser.profile.followers !== undefined && (
+                      <DetailCard>
+                        <DetailLabel>팔로워</DetailLabel>
+                        <DetailValue>{formatNumber(detailViewUser.profile.followers)}</DetailValue>
+                      </DetailCard>
+                    )}
+                    {detailViewUser.profile.following !== undefined && (
+                      <DetailCard>
+                        <DetailLabel>팔로우</DetailLabel>
+                        <DetailValue>{formatNumber(detailViewUser.profile.following)}</DetailValue>
+                      </DetailCard>
+                    )}
+                    {detailViewUser.profile.avg_engagement !== undefined && (
+                      <DetailCard>
+                        <DetailLabel>평균 참여율</DetailLabel>
+                        <DetailValue>{detailViewUser.profile.avg_engagement ? `${Math.round(detailViewUser.profile.avg_engagement * 100)}%` : '-'}</DetailValue>
+                      </DetailCard>
+                    )}
+                    {detailViewUser.profile.email_address && (
+                      <DetailCard>
+                        <DetailLabel>이메일</DetailLabel>
+                        <DetailValue>{detailViewUser.profile.email_address}</DetailValue>
+                      </DetailCard>
+                    )}
+                    <DetailCard>
+                      <DetailLabel>계정 유형</DetailLabel>
+                      <DetailValue>{detailViewUser.profile.is_business_account ? '비즈니스' : detailViewUser.profile.is_professional_account ? '프로페셔널' : '개인'}</DetailValue>
+                    </DetailCard>
+                    <DetailCard>
+                      <DetailLabel>인증 뱃지</DetailLabel>
+                      <DetailValue>{detailViewUser.profile.is_verified ? '있음' : '없음'}</DetailValue>
+                    </DetailCard>
+                  </DetailGrid>
+
+                  {detailViewUser.profile.bio && (
+                    <BioBox>
+                      <strong style={{ display: 'block', marginBottom: '0.5rem', color: '#2c3e50' }}>소개</strong>
+                      {detailViewUser.profile.bio}
+                    </BioBox>
+                  )}
+                </div>
+              )}
+
+              {/* 릴스 정보 */}
+              <div style={{ marginBottom: '2rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                  <h4 style={{ fontWeight: '600' }}>릴스 정보</h4>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', color: '#6c757d' }}>
+                    <PlayCircle size={16} /> 총 {sortedReels.length}개
+                  </div>
+                </div>
+
+                {sortedReels.length === 0 ? (
+                  <EmptyState>
+                    <PlayCircle size={28} style={{ marginBottom: '0.5rem', color: '#dee2e6' }} />
+                    <p>수집된 릴스가 없습니다</p>
+                    <p style={{ fontSize: '0.85rem', marginTop: '0.35rem' }}>탐색 탭에서 릴스 수집 옵션을 활성화하고 다시 시도해주세요.</p>
+                  </EmptyState>
+                ) : (
+                  <ReelTableWrapper>
+                    <ReelTable>
+                      <thead>
+                        <tr>
+                          <th style={{ width: '40%' }}>캡션</th>
+                          <th style={{ width: '120px' }}>미리보기</th>
+                          <th>게시일자</th>
+                          <th>좋아요</th>
+                          <th>댓글</th>
+                          <th>조회수</th>
+                          <th>구독 동기</th>
+                          <th>카테고리</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {sortedReels.map((reel: any, index: number) => {
+                          const previewUrl = getReelPreviewUrl(reel);
+                          const primaryMediaUrl = getPrimaryMediaUrl(reel);
+                          const displayMediaLink = Boolean(primaryMediaUrl && !isS3Url(primaryMediaUrl));
+                          const legacyExternalUrl = reel.url || reel.external_url || reel.profile_url;
+                          const externalUrl = displayMediaLink ? primaryMediaUrl : legacyExternalUrl;
+                          const previewContent = previewUrl ? (
+                            <ReelPreview src={previewUrl} alt={`${detailViewUser?.username || '릴스'} 미리보기`} loading="lazy" />
+                          ) : (
+                            <ReelPreviewFallback>미리보기 없음</ReelPreviewFallback>
+                          );
+                          
+                          // 개별 릴스 분류 결과에서 해당 릴스 찾기
+                          const reelClassification = detailViewUserReels?.reels?.find((r: IndividualReelEntry) => {
+                            // reel_id (문자열) 또는 reel_db_id (숫자)로 매칭
+                            // reel.id는 문자열일 수 있고, reel.reel_id도 문자열일 수 있음
+                            const reelIdStr = reel.id ? String(reel.id) : null;
+                            const reelReelIdStr = reel.reel_id ? String(reel.reel_id) : null;
+                            
+                            return (
+                              (reelIdStr && r.reel_id && String(r.reel_id) === reelIdStr) ||
+                              (reelReelIdStr && r.reel_id && String(r.reel_id) === reelReelIdStr) ||
+                              (reel.id && r.reel_db_id && String(r.reel_db_id) === String(reel.id)) ||
+                              (reel.reel_id && r.reel_db_id && String(r.reel_db_id) === String(reel.reel_id)) ||
+                              // timestamp로도 매칭 시도 (백업)
+                              (reel.timestamp && r.created_at && reel.timestamp === r.created_at)
+                            );
+                          });
+                          
+                          const motivationLabel = reelClassification?.subscription_motivation?.label || '-';
+                          const categoryLabel = reelClassification?.category?.label || '-';
+                          
+                          return (
+                            <tr key={reel.id || reel.timestamp || index}>
+                              <td>
+                                <ReelCaptionContainer>
+                                  {displayMediaLink && primaryMediaUrl && (
+                                    <a
+                                      href={primaryMediaUrl}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{
+                                        fontSize: '0.75rem',
+                                        color: '#1c7ed6',
+                                        textDecoration: 'none',
+                                        wordBreak: 'break-all',
+                                        marginBottom: '0.35rem'
+                                      }}
+                                      title={primaryMediaUrl}
+                                    >
+                                      {formatMediaUrl(primaryMediaUrl)}
+                                    </a>
+                                  )}
+                                  <ReelCaptionText>{formatCaption(reel.caption)}</ReelCaptionText>
+                                </ReelCaptionContainer>
+                              </td>
+                              <td>
+                                {externalUrl ? (
+                                  <a href={externalUrl} target="_blank" rel="noopener noreferrer">
+                                    {previewContent}
+                                  </a>
+                                ) : (
+                                  previewContent
+                                )}
+                              </td>
+                              <td>{formatDate(reel.date_posted || reel.timestamp)}</td>
+                              <td>{formatNumber(reel.likes)}</td>
+                              <td>{formatNumber(reel.num_comments)}</td>
+                              <td>{formatNumber(reel.video_play_count ?? reel.views)}</td>
+                              <td style={{ fontSize: '0.875rem' }}>{motivationLabel}</td>
+                              <td style={{ fontSize: '0.875rem' }}>{categoryLabel}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </ReelTable>
+                  </ReelTableWrapper>
+                )}
+              </div>
+            </ModalBody>
+          </ModalContent>
+        </ModalOverlay>
       )}
     </Container>
   );

@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
@@ -12,6 +12,12 @@ from app.services.blog_service import blog_service
 from app.services.openai_service import OpenAIService
 from app.services.grade_service import instagram_grade_service
 from app.core.config import settings
+
+KST_OFFSET = timedelta(hours=9)
+
+def now_kst() -> datetime:
+    """한국 시간(KST) 기준 현재 시간 반환"""
+    return datetime.utcnow() + KST_OFFSET
 
 class SchedulerService:
     def __init__(self):
@@ -53,10 +59,11 @@ class SchedulerService:
     async def run_scheduled_collection(self):
         """정기 수집 실행"""
         try:
-            print(f"Starting scheduled collection at {datetime.now()}")
+            current_time = now_kst()
+            print(f"Starting scheduled collection at {current_time} (KST)")
             
-            # 활성 스케줄 조회 (오늘 날짜가 수집 기간 내에 있는 것만)
-            today = datetime.now().date()
+            # 활성 스케줄 조회 (오늘 날짜가 수집 기간 내에 있는 것만) - 한국 시간 기준
+            today = current_time.date()
             active_schedules = self.db.query(models.CollectionSchedule).filter(
                 models.CollectionSchedule.is_active == True,
                 models.CollectionSchedule.start_date.cast(models.Date) <= today,
@@ -72,7 +79,7 @@ class SchedulerService:
                     print(f"Error processing schedule {schedule.id}: {str(e)}")
                     continue
             
-            print(f"Scheduled collection completed at {datetime.now()}")
+            print(f"Scheduled collection completed at {now_kst()} (KST)")
             
         except Exception as e:
             print(f"Error in scheduled collection: {str(e)}")
@@ -82,9 +89,51 @@ class SchedulerService:
     async def _process_schedule(self, schedule: models.CollectionSchedule):
         """개별 스케줄 처리"""
         campaign = schedule.campaign
-        collection_date = datetime.now()
+        collection_date = now_kst()  # 한국 시간 기준
+        today = collection_date.date()
         
-        print(f"Processing schedule for campaign: {campaign.name}, channel: {schedule.channel}")
+        print(f"Processing schedule for campaign: {campaign.name}, channel: {schedule.channel}, date: {today} (KST)")
+        
+        # 오늘 날짜에 이미 수집된 데이터가 있는지 확인
+        if schedule.channel in ['instagram_post', 'instagram_reel']:
+            # 릴스/포스트의 경우, 오늘 날짜에 이미 수집된 데이터가 있는지 확인
+            if schedule.channel == 'instagram_reel' or (schedule.channel == 'instagram_post' and self._is_reel_url(schedule.campaign_url)):
+                existing_today = self.db.query(models.CampaignInstagramReel).filter(
+                    models.CampaignInstagramReel.campaign_id == campaign.id,
+                    models.CampaignInstagramReel.campaign_url == schedule.campaign_url,
+                    models.CampaignInstagramReel.collection_date >= datetime.combine(today, time.min),
+                    models.CampaignInstagramReel.collection_date < datetime.combine(today + timedelta(days=1), time.min)
+                ).first()
+                
+                if existing_today:
+                    print(f"⚠️ 오늘({today}) 이미 수집된 데이터가 있습니다. 스킵합니다.")
+                    return
+            else:
+                # 포스트의 경우 (릴스가 아닌 경우)
+                existing_today = self.db.query(models.CampaignInstagramPost).filter(
+                    models.CampaignInstagramPost.campaign_id == campaign.id,
+                    models.CampaignInstagramPost.campaign_url == schedule.campaign_url,
+                    models.CampaignInstagramPost.collection_date >= datetime.combine(today, time.min),
+                    models.CampaignInstagramPost.collection_date < datetime.combine(today + timedelta(days=1), time.min)
+                ).first()
+                
+                if existing_today:
+                    print(f"⚠️ 오늘({today}) 이미 수집된 데이터가 있습니다. 스킵합니다.")
+                    return
+        elif schedule.channel == 'blog':
+            # 블로그의 경우, 오늘 날짜에 이미 수집된 데이터가 있는지 확인
+            existing_today = self.db.query(models.CampaignBlog).filter(
+                models.CampaignBlog.campaign_id == campaign.id,
+                models.CampaignBlog.campaign_url == schedule.campaign_url,
+                models.CampaignBlog.collection_date >= datetime.combine(today, time.min),
+                models.CampaignBlog.collection_date < datetime.combine(today + timedelta(days=1), time.min)
+            ).first()
+            
+            if existing_today:
+                print(f"⚠️ 오늘({today}) 이미 수집된 데이터가 있습니다. 스킵합니다.")
+                return
+        
+        print(f"✅ 오늘({today}) 수집 시작")
         
         if schedule.channel == 'instagram_post':
             if self._is_reel_url(schedule.campaign_url):

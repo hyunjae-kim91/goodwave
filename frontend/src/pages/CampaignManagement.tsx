@@ -307,7 +307,7 @@ const CampaignManagement: React.FC = () => {
   const [editForm, setEditForm] = useState<EditFormState | null>(null);
   const [updatingCampaignId, setUpdatingCampaignId] = useState<number | null>(null);
   const [selectedCampaignId, setSelectedCampaignId] = useState<number | null>(null);
-  const [createFormExpanded, setCreateFormExpanded] = useState(false);
+  const [selectedCampaignType, setSelectedCampaignType] = useState<string>('');
 
   useEffect(() => {
     fetchCampaigns();
@@ -573,20 +573,45 @@ const CampaignManagement: React.FC = () => {
       <Title>캠페인 관리</Title>
       
       <CampaignList>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '1.5rem' }}>
-          <h2 style={{ margin: 0 }}>등록된 캠페인</h2>
-          <Select 
-            value={selectedCampaignId || ''} 
-            onChange={(e) => setSelectedCampaignId(e.target.value ? Number(e.target.value) : null)}
-            style={{ width: 'auto', minWidth: '300px' }}
-          >
-            <option value="">캠페인을 선택하세요</option>
-            {(campaigns || []).map(campaign => (
-              <option key={campaign.id} value={campaign.id}>
-                {campaign.name}
-              </option>
-            ))}
-          </Select>
+        <div style={{ marginBottom: '1.5rem' }}>
+          <h2 style={{ margin: '0 0 1rem 0' }}>등록된 캠페인</h2>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Label style={{ margin: 0, minWidth: '80px' }}>캠페인 유형</Label>
+              <Select 
+                value={selectedCampaignType}
+                onChange={(e) => {
+                  setSelectedCampaignType(e.target.value);
+                  setSelectedCampaignId(null); // 유형 변경 시 캠페인 선택 초기화
+                }}
+                style={{ width: 'auto', minWidth: '200px' }}
+              >
+                <option value="">전체</option>
+                {CAMPAIGN_TYPE_OPTIONS.filter(opt => opt.value !== 'all').map(option => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <Label style={{ margin: 0, minWidth: '80px' }}>캠페인 선택</Label>
+              <Select 
+                value={selectedCampaignId || ''} 
+                onChange={(e) => setSelectedCampaignId(e.target.value ? Number(e.target.value) : null)}
+                style={{ width: 'auto', minWidth: '300px' }}
+              >
+                <option value="">캠페인을 선택하세요</option>
+                {(campaigns || [])
+                  .filter(campaign => !selectedCampaignType || campaign.campaign_type === selectedCampaignType)
+                  .map(campaign => (
+                    <option key={campaign.id} value={campaign.id}>
+                      {campaign.name}
+                    </option>
+                  ))}
+              </Select>
+            </div>
+          </div>
         </div>
         {selectedCampaignId && (campaigns || []).filter(campaign => campaign.id === selectedCampaignId).map(campaign => (
           <CampaignCard key={campaign.id}>
@@ -724,12 +749,10 @@ const CampaignManagement: React.FC = () => {
       </CampaignList>
       
       <FormSection>
-        <SectionTitle clickable onClick={() => setCreateFormExpanded(!createFormExpanded)}>
-          <ToggleIcon>{createFormExpanded ? '▼' : '▶'}</ToggleIcon>
+        <SectionTitle>
           새 캠페인 생성
         </SectionTitle>
-        {createFormExpanded && (
-          <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit}>
             <FormGrid>
               <FormGroup>
                 <Label>캠페인 이름</Label>
@@ -827,7 +850,6 @@ const CampaignManagement: React.FC = () => {
               {loading ? '생성 중...' : '캠페인 생성'}
             </Button>
           </form>
-        )}
       </FormSection>
     </Container>
   );

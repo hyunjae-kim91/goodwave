@@ -586,10 +586,8 @@ class OpenAIService:
                     InfluencerClassificationSummary.classification_job_id
                     == classification_job_id
                 )
-            else:
-                summaries_query = summaries_query.filter(
-                    InfluencerClassificationSummary.classification_job_id.is_(None)
-                )
+            # job_id가 None일 때는 모든 데이터를 집계 (aggregated-summary와 동일한 동작)
+            # classification_job_id 필터를 제거하여 모든 분류 결과를 포함
 
             summaries = summaries_query.all()
 

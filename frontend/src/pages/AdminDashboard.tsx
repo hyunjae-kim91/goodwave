@@ -292,11 +292,7 @@ const AdminDashboard: React.FC = () => {
         </StatCard>
         <StatCard>
           <StatValue>{dashboardData.statistics.active_campaigns}</StatValue>
-          <StatLabel>활성 캠페인</StatLabel>
-        </StatCard>
-        <StatCard>
-          <StatValue>{dashboardData.statistics.total_instagram_posts}</StatValue>
-          <StatLabel>인스타그램 게시물</StatLabel>
+          <StatLabel>진행 중인 캠페인</StatLabel>
         </StatCard>
         <StatCard>
           <StatValue>{dashboardData.statistics.total_instagram_reels}</StatValue>

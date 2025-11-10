@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import styled from 'styled-components';
 import toast from 'react-hot-toast';
-import { Download, Loader2, CheckCircle, XCircle, Users, Activity, User, Video, RefreshCcw, Trash2, Square, StopCircle } from 'lucide-react';
+import { Download, Loader2, CheckCircle, XCircle, Users, Activity, User, Video, RefreshCcw, Trash2, Square, StopCircle, Copy, ChevronDown, ChevronRight } from 'lucide-react';
 import { useAppStore } from '../../store/influencer/useAppStore';
 import { influencerApi } from '../../services/influencer/influencerApi';
 import { adminApi } from '../../services/api';
@@ -775,6 +775,10 @@ const IngestTab: React.FC = () => {
   const [stopLoading, setStopLoading] = useState(false);
   const [stopAllLoading, setStopAllLoading] = useState(false);
   const [queueExpanded, setQueueExpanded] = useState(false);
+  const [usersWithoutProfile, setUsersWithoutProfile] = useState<string[]>([]);
+  const [usersWithoutReels, setUsersWithoutReels] = useState<string[]>([]);
+  const [loadingUncollectedUsers, setLoadingUncollectedUsers] = useState(false);
+  const [uncollectedExpanded, setUncollectedExpanded] = useState(false);
   
   // SSE 연결 설정
   const setupSSE = (sessionId: string) => {
@@ -1024,8 +1028,52 @@ const IngestTab: React.FC = () => {
   // 컴포넌트 마운트 시 데이터 로드 (자동 새로고침 비활성화)
   useEffect(() => {
     refreshQueueData();
+    loadUncollectedUsers();
     // 자동 새로고침 제거 - 수동 새로고침 버튼만 사용
   }, [refreshQueueData]);
+
+  // 미수집 사용자 목록 로드
+  const loadUncollectedUsers = async () => {
+    try {
+      setLoadingUncollectedUsers(true);
+      const response = await fetch('/api/influencer/files/users');
+      if (!response.ok) {
+        throw new Error('사용자 목록을 불러오지 못했습니다');
+      }
+      const data = await response.json();
+      const usersList = Array.isArray(data.users) ? data.users : [];
+      
+      const withoutProfile = usersList
+        .filter((user: any) => user.followers === null || user.followers === undefined)
+        .map((user: any) => user.username);
+      
+      const withoutReels = usersList
+        .filter((user: any) => !user.hasReels)
+        .map((user: any) => user.username);
+      
+      setUsersWithoutProfile(withoutProfile);
+      setUsersWithoutReels(withoutReels);
+    } catch (error) {
+      console.error('미수집 사용자 목록 로드 실패:', error);
+    } finally {
+      setLoadingUncollectedUsers(false);
+    }
+  };
+
+  // URL 복사 함수
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      toast.success('클립보드에 복사되었습니다');
+    }).catch(() => {
+      toast.error('복사에 실패했습니다');
+    });
+  };
+
+  // 전체 URL 복사 함수
+  const copyAllUrls = (usernames: string[]) => {
+    const urls = usernames.map(username => `https://www.instagram.com/${username}/`).join('\n');
+    copyToClipboard(urls);
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1606,6 +1654,226 @@ const IngestTab: React.FC = () => {
             )}
           </Button>
         </form>
+
+        {/* 미수집 리스트 */}
+        <div style={{ marginTop: '2rem', borderTop: '1px solid #e9ecef', paddingTop: '1.5rem' }}>
+          <div
+            onClick={() => setUncollectedExpanded(!uncollectedExpanded)}
+            style={{
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              marginBottom: '1rem',
+              padding: '0.75rem',
+              background: '#f8f9fa',
+              borderRadius: '4px',
+              border: '1px solid #dee2e6'
+            }}
+          >
+            {uncollectedExpanded ? <ChevronDown size={20} /> : <ChevronRight size={20} />}
+            <span style={{ fontWeight: 600, color: '#2c3e50' }}>미수집 리스트</span>
+            {loadingUncollectedUsers && (
+              <Loader2 size={16} style={{ animation: 'spin 1s linear infinite', marginLeft: '0.5rem' }} />
+            )}
+          </div>
+
+          {uncollectedExpanded && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+              {/* 프로필 없는 계정 리스트 */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <User size={18} style={{ color: '#dc3545' }} />
+                    <span style={{ fontWeight: 600, color: '#2c3e50' }}>
+                      프로필 없는 계정 ({usersWithoutProfile.length}개)
+                    </span>
+                  </div>
+                  {usersWithoutProfile.length > 0 && (
+                    <button
+                      onClick={() => copyAllUrls(usersWithoutProfile)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        padding: '0.35rem 0.75rem',
+                        fontSize: '0.875rem',
+                        background: '#3498db',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Copy size={14} />
+                      전체 복사
+                    </button>
+                  )}
+                </div>
+                {usersWithoutProfile.length === 0 ? (
+                  <div style={{ padding: '1rem', background: '#f8f9fa', borderRadius: '4px', color: '#6c757d', fontSize: '0.875rem' }}>
+                    프로필이 없는 계정이 없습니다.
+                  </div>
+                ) : (
+                  <div style={{
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    border: '1px solid #dee2e6',
+                    borderRadius: '4px',
+                    background: 'white'
+                  }}>
+                    {usersWithoutProfile.map((username) => {
+                      const url = `https://www.instagram.com/${username}/`;
+                      return (
+                        <div
+                          key={username}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '0.75rem',
+                            borderBottom: '1px solid #f1f3f5'
+                          }}
+                        >
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              color: '#1d4ed8',
+                              textDecoration: 'none',
+                              fontSize: '0.875rem',
+                              wordBreak: 'break-all',
+                              flex: 1
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {url}
+                          </a>
+                          <button
+                            onClick={() => copyToClipboard(url)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                              padding: '0.25rem 0.5rem',
+                              fontSize: '0.75rem',
+                              background: '#f8f9fa',
+                              color: '#495057',
+                              border: '1px solid #dee2e6',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              marginLeft: '0.5rem'
+                            }}
+                            title="URL 복사"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* 릴스 없는 계정 리스트 */}
+              <div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <Video size={18} style={{ color: '#dc3545' }} />
+                    <span style={{ fontWeight: 600, color: '#2c3e50' }}>
+                      릴스 없는 계정 ({usersWithoutReels.length}개)
+                    </span>
+                  </div>
+                  {usersWithoutReels.length > 0 && (
+                    <button
+                      onClick={() => copyAllUrls(usersWithoutReels)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.25rem',
+                        padding: '0.35rem 0.75rem',
+                        fontSize: '0.875rem',
+                        background: '#3498db',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      <Copy size={14} />
+                      전체 복사
+                    </button>
+                  )}
+                </div>
+                {usersWithoutReels.length === 0 ? (
+                  <div style={{ padding: '1rem', background: '#f8f9fa', borderRadius: '4px', color: '#6c757d', fontSize: '0.875rem' }}>
+                    릴스가 없는 계정이 없습니다.
+                  </div>
+                ) : (
+                  <div style={{
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    border: '1px solid #dee2e6',
+                    borderRadius: '4px',
+                    background: 'white'
+                  }}>
+                    {usersWithoutReels.map((username) => {
+                      const url = `https://www.instagram.com/${username}/`;
+                      return (
+                        <div
+                          key={username}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '0.75rem',
+                            borderBottom: '1px solid #f1f3f5'
+                          }}
+                        >
+                          <a
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{
+                              color: '#1d4ed8',
+                              textDecoration: 'none',
+                              fontSize: '0.875rem',
+                              wordBreak: 'break-all',
+                              flex: 1
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {url}
+                          </a>
+                          <button
+                            onClick={() => copyToClipboard(url)}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '0.25rem',
+                              padding: '0.25rem 0.5rem',
+                              fontSize: '0.75rem',
+                              background: '#f8f9fa',
+                              color: '#495057',
+                              border: '1px solid #dee2e6',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                              marginLeft: '0.5rem'
+                            }}
+                            title="URL 복사"
+                          >
+                            <Copy size={12} />
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       </Section>
 
       {/* 수집 상황 모달 */}

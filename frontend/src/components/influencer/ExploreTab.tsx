@@ -416,11 +416,8 @@ const ExploreTab: React.FC = () => {
   // 숫자 및 날짜 포맷팅
   const formatNumber = (num?: number): string => {
     if (num === undefined || num === null) return '0';
-    if (num >= 1000000) {
-      return `${(num / 1000000).toFixed(1)}M`;
-    }
-    if (num >= 1000) {
-      return `${(num / 1000).toFixed(1)}K`;
+    if (num >= 10000) {
+      return `${(num / 10000).toFixed(1)}만`;
     }
     return num.toString();
   };
@@ -744,7 +741,7 @@ const ExploreTab: React.FC = () => {
                 </DetailCard>
                 {selectedUser.profile.profile_name && (
                   <DetailCard>
-                    <DetailLabel>이름</DetailLabel>
+                    <DetailLabel>닉네임</DetailLabel>
                     <DetailValue>{selectedUser.profile.profile_name}</DetailValue>
                   </DetailCard>
                 )}
@@ -768,14 +765,14 @@ const ExploreTab: React.FC = () => {
                 )}
                 {selectedUser.profile.following !== undefined && (
                   <DetailCard>
-                    <DetailLabel>팔로잉</DetailLabel>
+                    <DetailLabel>팔로우</DetailLabel>
                     <DetailValue>{formatNumber(selectedUser.profile.following)}</DetailValue>
                   </DetailCard>
                 )}
                 {selectedUser.profile.avg_engagement !== undefined && (
                   <DetailCard>
                     <DetailLabel>평균 참여율</DetailLabel>
-                    <DetailValue>{selectedUser.profile.avg_engagement?.toFixed?.(2) ?? '-'}</DetailValue>
+                    <DetailValue>{selectedUser.profile.avg_engagement ? `${Math.round(selectedUser.profile.avg_engagement * 100)}%` : '-'}</DetailValue>
                   </DetailCard>
                 )}
                 {selectedUser.profile.email_address && (
