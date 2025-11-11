@@ -730,6 +730,8 @@ const OverallAnalysisTab: React.FC = () => {
   // 페이지네이션 상태
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+  // 선택된 계정 상태
+  const [selectedUsernames, setSelectedUsernames] = useState<Set<string>>(new Set());
   
   const [filters, setFilters] = useState<{
     username: string;
@@ -763,10 +765,53 @@ const OverallAnalysisTab: React.FC = () => {
     accountType: ''
   });
 
-  // 필터 변경 시 첫 페이지로 리셋
+  // 필터 변경 시 첫 페이지로 리셋 및 선택 초기화
   useEffect(() => {
     setCurrentPage(1);
-  }, [filters.username, filters.grade, filters.motivation1, filters.motivation2, filters.category1, filters.category2, filters.accountType, filters.memo]);
+    // 필터가 변경되면 선택된 항목 중 필터링된 항목에 포함되지 않는 항목 제거
+    const filteredUsernames = new Set(
+      (analysisData || []).filter((data) => {
+        if (filters.username && data.username !== filters.username) return false;
+        if (data.followers !== undefined) {
+          const min = filters.followersMin || 0;
+          const max = filters.followersMax || getMaxValue('followers');
+          if (data.followers < min || data.followers > max) return false;
+        }
+        if (data.avgLikes !== undefined) {
+          const min = filters.avgLikesMin || 0;
+          const max = filters.avgLikesMax || getMaxValue('avgLikes');
+          if (data.avgLikes < min || data.avgLikes > max) return false;
+        }
+        if (data.avgComments !== undefined) {
+          const min = filters.avgCommentsMin || 0;
+          const max = filters.avgCommentsMax || getMaxValue('avgComments');
+          if (data.avgComments < min || data.avgComments > max) return false;
+        }
+        if (filters.grade && data.grade !== filters.grade) return false;
+        const motivation1 = data.subscriptionMotivationStats?.[0];
+        if (filters.motivation1 && (!motivation1 || motivation1.motivation !== filters.motivation1)) return false;
+        const motivation2 = data.subscriptionMotivationStats?.[1];
+        if (filters.motivation2 && (!motivation2 || motivation2.motivation !== filters.motivation2)) return false;
+        const category1 = data.categoryStats?.[0];
+        if (filters.category1 && (!category1 || category1.category !== filters.category1)) return false;
+        const category2 = data.categoryStats?.[1];
+        if (filters.category2 && (!category2 || category2.category !== filters.category2)) return false;
+        if (filters.memo && (!data.memo || !data.memo.toLowerCase().includes(filters.memo.toLowerCase()))) return false;
+        if (filters.accountType && (!data.category || data.category !== filters.accountType)) return false;
+        return true;
+      }).map(data => data.username)
+    );
+    
+    // 선택된 항목 중 필터링된 항목에 포함되지 않는 항목 제거
+    const newSelected = new Set<string>();
+    selectedUsernames.forEach(username => {
+      if (filteredUsernames.has(username)) {
+        newSelected.add(username);
+      }
+    });
+    setSelectedUsernames(newSelected);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filters.username, filters.grade, filters.motivation1, filters.motivation2, filters.category1, filters.category2, filters.accountType, filters.memo, filters.followersMin, filters.followersMax, filters.avgLikesMin, filters.avgLikesMax, filters.avgCommentsMin, filters.avgCommentsMax]);
 
   // 필터 옵션 정의
   const gradeOptions = ['', '레드', '블루', '골드', '프리미엄'];
@@ -1365,7 +1410,66 @@ const OverallAnalysisTab: React.FC = () => {
 
   // 분석 결과 내보내기
   const exportAnalysisResults = () => {
-    if (analysisData.length === 0) {
+    // 필터링된 데이터 계산
+    const filteredData = (analysisData || []).filter((data) => {
+      if (filters.username && data.username !== filters.username) {
+        return false;
+      }
+      if (data.followers !== undefined) {
+        const min = filters.followersMin || 0;
+        const max = filters.followersMax || getMaxValue('followers');
+        if (data.followers < min || data.followers > max) {
+          return false;
+        }
+      }
+      if (data.avgLikes !== undefined) {
+        const min = filters.avgLikesMin || 0;
+        const max = filters.avgLikesMax || getMaxValue('avgLikes');
+        if (data.avgLikes < min || data.avgLikes > max) {
+          return false;
+        }
+      }
+      if (data.avgComments !== undefined) {
+        const min = filters.avgCommentsMin || 0;
+        const max = filters.avgCommentsMax || getMaxValue('avgComments');
+        if (data.avgComments < min || data.avgComments > max) {
+          return false;
+        }
+      }
+      if (filters.grade && data.grade !== filters.grade) {
+        return false;
+      }
+      const motivation1 = data.subscriptionMotivationStats?.[0];
+      if (filters.motivation1 && (!motivation1 || motivation1.motivation !== filters.motivation1)) {
+        return false;
+      }
+      const motivation2 = data.subscriptionMotivationStats?.[1];
+      if (filters.motivation2 && (!motivation2 || motivation2.motivation !== filters.motivation2)) {
+        return false;
+      }
+      const category1 = data.categoryStats?.[0];
+      if (filters.category1 && (!category1 || category1.category !== filters.category1)) {
+        return false;
+      }
+      const category2 = data.categoryStats?.[1];
+      if (filters.category2 && (!category2 || category2.category !== filters.category2)) {
+        return false;
+      }
+      if (filters.memo && (!data.memo || !data.memo.toLowerCase().includes(filters.memo.toLowerCase()))) {
+        return false;
+      }
+      if (filters.accountType && (!data.category || data.category !== filters.accountType)) {
+        return false;
+      }
+      return true;
+    });
+
+    // 선택된 계정만 필터링
+    const dataToExport = selectedUsernames.size > 0
+      ? filteredData.filter(data => selectedUsernames.has(data.username))
+      : filteredData;
+
+    if (dataToExport.length === 0) {
       toast.error('내보낼 분석 결과가 없습니다');
       return;
     }
@@ -1373,16 +1477,37 @@ const OverallAnalysisTab: React.FC = () => {
     // UTF-8 BOM 추가하여 엑셀에서 한글이 깨지지 않도록 함
     const BOM = '\uFEFF';
     const csvContent = BOM + [
-      ['사용자명', '팔로워', '카테고리', '평균참여율(%)', '평균 조회수', '구독 동기 분류', '카테고리 분류'].join(','),
-      ...(analysisData || []).map(data => [
-        data.username,
-        data.followers || 0,
-        data.category ?? '',
-        data.avgEngagementRate || 0,
-        data.avgVideoPlayCount || 0,
-        formatMotivationStatsLine(data.subscriptionMotivationStats),
-        formatCategoryStatsLine(data.categoryStats)
-      ].join(','))
+      ['사용자명', '이름', '팔로워', '등급', '계정 유형', '평균참여율', '평균 조회수', '평균 좋아요', '평균 댓글', '구독 동기 1', '구독 동기 2', '카테고리 1', '카테고리 2', '메모'].join(','),
+      ...dataToExport.map(data => {
+        const motivation1 = data.subscriptionMotivationStats?.[0];
+        const motivation2 = data.subscriptionMotivationStats?.[1];
+        const category1 = data.categoryStats?.[0];
+        const category2 = data.categoryStats?.[1];
+        
+        return [
+          data.username,
+          data.fullName || '-',
+          data.followers || 0,
+          data.grade || 'N/A',
+          data.category ?? '',
+          data.avgEngagementRate ? `${data.avgEngagementRate}%` : 'N/A',
+          data.avgVideoPlayCount || 'N/A',
+          data.avgLikes || 'N/A',
+          data.avgComments || 'N/A',
+          motivation1 ? motivation1.motivation : '-',
+          motivation2 ? motivation2.motivation : '-',
+          category1 ? category1.category : '-',
+          category2 ? category2.category : '-',
+          data.memo || '-'
+        ].map(cell => {
+          // CSV에서 쉼표나 따옴표가 포함된 경우 처리
+          const cellStr = String(cell);
+          if (cellStr.includes(',') || cellStr.includes('"') || cellStr.includes('\n')) {
+            return `"${cellStr.replace(/"/g, '""')}"`;
+          }
+          return cellStr;
+        }).join(',');
+      })
     ].join('\n');
 
     const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -1395,7 +1520,7 @@ const OverallAnalysisTab: React.FC = () => {
     link.click();
     document.body.removeChild(link);
     
-    toast.success('분석 결과가 CSV 파일로 내보내졌습니다');
+    toast.success(`선택된 ${dataToExport.length}명의 분석 결과가 CSV 파일로 내보내졌습니다`);
   };
 
   // 컴포넌트 마운트 시 사용자 목록 로드
@@ -1822,12 +1947,67 @@ const OverallAnalysisTab: React.FC = () => {
         const endIndex = startIndex + itemsPerPage;
         const paginatedData = filteredData.slice(startIndex, endIndex);
 
+        // 현재 페이지의 모든 항목이 선택되었는지 확인
+        const allPageSelected = paginatedData.length > 0 && paginatedData.every(data => selectedUsernames.has(data.username));
+        // 필터링된 데이터 중 선택된 항목 수
+        const selectedCount = filteredData.filter(data => selectedUsernames.has(data.username)).length;
+
+        // 전체 선택/해제 핸들러
+        const handleSelectAll = (checked: boolean) => {
+          if (checked) {
+            const newSelected = new Set(selectedUsernames);
+            filteredData.forEach(data => newSelected.add(data.username));
+            setSelectedUsernames(newSelected);
+          } else {
+            const newSelected = new Set(selectedUsernames);
+            filteredData.forEach(data => newSelected.delete(data.username));
+            setSelectedUsernames(newSelected);
+          }
+        };
+
+        // 개별 선택/해제 핸들러
+        const handleSelectOne = (username: string, checked: boolean) => {
+          const newSelected = new Set(selectedUsernames);
+          if (checked) {
+            newSelected.add(username);
+          } else {
+            newSelected.delete(username);
+          }
+          setSelectedUsernames(newSelected);
+        };
+
         return (
           <Section>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <div style={{ fontSize: '0.875rem', color: '#6c757d' }}>
+                {selectedCount > 0 && (
+                  <span>선택된 계정: {selectedCount}개</span>
+                )}
+              </div>
+              {selectedCount > 0 && (
+                <SmallButton
+                  onClick={() => {
+                    const newSelected = new Set(selectedUsernames);
+                    filteredData.forEach(data => newSelected.delete(data.username));
+                    setSelectedUsernames(newSelected);
+                  }}
+                >
+                  선택 해제
+                </SmallButton>
+              )}
+            </div>
             <TableContainer>
               <Table>
                 <thead>
                   <tr>
+                    <TableHeader style={{ width: '40px', textAlign: 'center' }}>
+                      <input
+                        type="checkbox"
+                        checked={allPageSelected}
+                        onChange={(e) => handleSelectAll(e.target.checked)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    </TableHeader>
                     <TableHeader>사용자명</TableHeader>
                     <TableHeader>이름</TableHeader>
                     <TableHeader>팔로워</TableHeader>
@@ -1855,6 +2035,14 @@ const OverallAnalysisTab: React.FC = () => {
                     return (
                       <React.Fragment key={data.username}>
                         <TableRow isEven={index % 2 === 0}>
+                      <TableCell style={{ textAlign: 'center' }}>
+                        <input
+                          type="checkbox"
+                          checked={selectedUsernames.has(data.username)}
+                          onChange={(e) => handleSelectOne(data.username, e.target.checked)}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      </TableCell>
                       <TableCell>
                         <UsernameBadge>@{data.username}</UsernameBadge>
                       </TableCell>
@@ -2033,7 +2221,7 @@ const OverallAnalysisTab: React.FC = () => {
                     </TableRow>
                       {editingAnalysisRow === data.username && analysisEditForm && (
                         <TableRow>
-                          <TableCell colSpan={15}>
+                          <TableCell colSpan={16}>
                             <OverrideFormContainer>
                               <OverrideSection>
                                 <OverrideSectionTitle>구독 동기</OverrideSectionTitle>
