@@ -165,7 +165,7 @@ const Select = styled.select`
 const RangeSliderContainer = styled.div`
   position: relative;
   width: 100%;
-  height: 40px;
+  height: 50px;
   display: flex;
   align-items: center;
 `;
@@ -200,34 +200,50 @@ const RangeSliderActiveTrack = styled.div<{ left: number; width: number }>`
 const RangeSlider = styled.input<{ isMin?: boolean }>`
   position: absolute;
   width: 100%;
-  height: 6px;
+  height: 20px;
   background: transparent;
   outline: none;
   -webkit-appearance: none;
   pointer-events: auto;
   z-index: ${props => props.isMin ? 3 : 2};
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
   
   &::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     border-radius: 50%;
     background: #3498db;
     cursor: pointer;
+    position: relative;
+    z-index: 5;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+  }
+  
+  &::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: #3498db;
+    cursor: pointer;
+    border: 2px solid white;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     position: relative;
     z-index: 5;
   }
   
-  &::-moz-range-thumb {
-    width: 18px;
-    height: 18px;
-    border-radius: 50%;
-    background: #3498db;
-    cursor: pointer;
-    border: none;
-    position: relative;
-    z-index: 5;
+  &::-webkit-slider-runnable-track {
+    height: 6px;
+    background: transparent;
+  }
+  
+  &::-moz-range-track {
+    height: 6px;
+    background: transparent;
   }
 `;
 
@@ -1469,48 +1485,54 @@ const OverallAnalysisTab: React.FC = () => {
                     <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
                       팔로워 수
                     </label>
-                    <RangeSliderContainer>
-                      <RangeSliderWrapper>
-                        <RangeSliderTrack />
-                        <RangeSliderActiveTrack
-                          left={(filters.followersMin || 0) / getMaxValue('followers') * 100}
-                          width={((Math.min(filters.followersMax || getMaxValue('followers'), getMaxValue('followers'))) - (filters.followersMin || 0)) / getMaxValue('followers') * 100}
-                        />
-                        <RangeSlider
-                          type="range"
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>최소</label>
+                        <Input
+                          type="number"
                           min="0"
                           max={getMaxValue('followers')}
-                          value={filters.followersMin || 0}
-                          isMin={true}
+                          value={filters.followersMin || ''}
                           onChange={(e) => {
-                            const newMin = parseInt(e.target.value) || 0;
-                            const max = filters.followersMax || getMaxValue('followers');
-                            if (newMin <= max) {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setFilters({...filters, followersMin: 0});
+                              return;
+                            }
+                            const newMin = parseInt(value) || 0;
+                            const max = Math.min(filters.followersMax || getMaxValue('followers'), getMaxValue('followers'));
+                            if (newMin <= max && newMin >= 0) {
                               setFilters({...filters, followersMin: newMin});
                             }
                           }}
+                          style={{ padding: '0.5rem', fontSize: '0.875rem' }}
                         />
-                        <RangeSlider
-                          type="range"
-                          min="0"
+                      </div>
+                      <span style={{ marginTop: '1.5rem', color: '#6c757d' }}>~</span>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>최대</label>
+                        <Input
+                          type="number"
+                          min={filters.followersMin || 0}
                           max={getMaxValue('followers')}
-                          value={Math.min(filters.followersMax || getMaxValue('followers'), getMaxValue('followers'))}
-                          isMin={false}
+                          value={filters.followersMax || ''}
                           onChange={(e) => {
+                            const value = e.target.value;
                             const maxValue = getMaxValue('followers');
-                            const newMax = Math.min(parseInt(e.target.value) || maxValue, maxValue);
+                            if (value === '') {
+                              setFilters({...filters, followersMax: maxValue});
+                              return;
+                            }
+                            const newMax = Math.min(parseInt(value) || maxValue, maxValue);
                             const min = filters.followersMin || 0;
-                            if (newMax >= min) {
+                            if (newMax >= min && newMax <= maxValue) {
                               setFilters({...filters, followersMax: newMax});
                             }
                           }}
+                          style={{ padding: '0.5rem', fontSize: '0.875rem' }}
                         />
-                      </RangeSliderWrapper>
-                    </RangeSliderContainer>
-                    <RangeValue>
-                      <span>{filters.followersMin.toLocaleString()}</span>
-                      <span>{filters.followersMax.toLocaleString()}</span>
-                    </RangeValue>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div>
@@ -1527,48 +1549,54 @@ const OverallAnalysisTab: React.FC = () => {
                     <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
                       평균 좋아요 수
                     </label>
-                    <RangeSliderContainer>
-                      <RangeSliderWrapper>
-                        <RangeSliderTrack />
-                        <RangeSliderActiveTrack
-                          left={(filters.avgLikesMin || 0) / getMaxValue('avgLikes') * 100}
-                          width={((Math.min(filters.avgLikesMax || getMaxValue('avgLikes'), getMaxValue('avgLikes'))) - (filters.avgLikesMin || 0)) / getMaxValue('avgLikes') * 100}
-                        />
-                        <RangeSlider
-                          type="range"
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>최소</label>
+                        <Input
+                          type="number"
                           min="0"
                           max={getMaxValue('avgLikes')}
-                          value={filters.avgLikesMin || 0}
-                          isMin={true}
+                          value={filters.avgLikesMin || ''}
                           onChange={(e) => {
-                            const newMin = parseInt(e.target.value) || 0;
-                            const max = filters.avgLikesMax || getMaxValue('avgLikes');
-                            if (newMin <= max) {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setFilters({...filters, avgLikesMin: 0});
+                              return;
+                            }
+                            const newMin = parseInt(value) || 0;
+                            const max = Math.min(filters.avgLikesMax || getMaxValue('avgLikes'), getMaxValue('avgLikes'));
+                            if (newMin <= max && newMin >= 0) {
                               setFilters({...filters, avgLikesMin: newMin});
                             }
                           }}
+                          style={{ padding: '0.5rem', fontSize: '0.875rem' }}
                         />
-                        <RangeSlider
-                          type="range"
-                          min="0"
+                      </div>
+                      <span style={{ marginTop: '1.5rem', color: '#6c757d' }}>~</span>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>최대</label>
+                        <Input
+                          type="number"
+                          min={filters.avgLikesMin || 0}
                           max={getMaxValue('avgLikes')}
-                          value={Math.min(filters.avgLikesMax || getMaxValue('avgLikes'), getMaxValue('avgLikes'))}
-                          isMin={false}
+                          value={filters.avgLikesMax || ''}
                           onChange={(e) => {
+                            const value = e.target.value;
                             const maxValue = getMaxValue('avgLikes');
-                            const newMax = Math.min(parseInt(e.target.value) || maxValue, maxValue);
+                            if (value === '') {
+                              setFilters({...filters, avgLikesMax: maxValue});
+                              return;
+                            }
+                            const newMax = Math.min(parseInt(value) || maxValue, maxValue);
                             const min = filters.avgLikesMin || 0;
-                            if (newMax >= min) {
+                            if (newMax >= min && newMax <= maxValue) {
                               setFilters({...filters, avgLikesMax: newMax});
                             }
                           }}
+                          style={{ padding: '0.5rem', fontSize: '0.875rem' }}
                         />
-                      </RangeSliderWrapper>
-                    </RangeSliderContainer>
-                    <RangeValue>
-                      <span>{filters.avgLikesMin.toLocaleString()}</span>
-                      <span>{filters.avgLikesMax.toLocaleString()}</span>
-                    </RangeValue>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div>
@@ -1585,48 +1613,54 @@ const OverallAnalysisTab: React.FC = () => {
                     <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
                       평균 댓글 수
                     </label>
-                    <RangeSliderContainer>
-                      <RangeSliderWrapper>
-                        <RangeSliderTrack />
-                        <RangeSliderActiveTrack
-                          left={(filters.avgCommentsMin || 0) / getMaxValue('avgComments') * 100}
-                          width={((Math.min(filters.avgCommentsMax || getMaxValue('avgComments'), getMaxValue('avgComments'))) - (filters.avgCommentsMin || 0)) / getMaxValue('avgComments') * 100}
-                        />
-                        <RangeSlider
-                          type="range"
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>최소</label>
+                        <Input
+                          type="number"
                           min="0"
                           max={getMaxValue('avgComments')}
-                          value={filters.avgCommentsMin || 0}
-                          isMin={true}
+                          value={filters.avgCommentsMin || ''}
                           onChange={(e) => {
-                            const newMin = parseInt(e.target.value) || 0;
-                            const max = filters.avgCommentsMax || getMaxValue('avgComments');
-                            if (newMin <= max) {
+                            const value = e.target.value;
+                            if (value === '') {
+                              setFilters({...filters, avgCommentsMin: 0});
+                              return;
+                            }
+                            const newMin = parseInt(value) || 0;
+                            const max = Math.min(filters.avgCommentsMax || getMaxValue('avgComments'), getMaxValue('avgComments'));
+                            if (newMin <= max && newMin >= 0) {
                               setFilters({...filters, avgCommentsMin: newMin});
                             }
                           }}
+                          style={{ padding: '0.5rem', fontSize: '0.875rem' }}
                         />
-                        <RangeSlider
-                          type="range"
-                          min="0"
+                      </div>
+                      <span style={{ marginTop: '1.5rem', color: '#6c757d' }}>~</span>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '0.7rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>최대</label>
+                        <Input
+                          type="number"
+                          min={filters.avgCommentsMin || 0}
                           max={getMaxValue('avgComments')}
-                          value={Math.min(filters.avgCommentsMax || getMaxValue('avgComments'), getMaxValue('avgComments'))}
-                          isMin={false}
+                          value={filters.avgCommentsMax || ''}
                           onChange={(e) => {
+                            const value = e.target.value;
                             const maxValue = getMaxValue('avgComments');
-                            const newMax = Math.min(parseInt(e.target.value) || maxValue, maxValue);
+                            if (value === '') {
+                              setFilters({...filters, avgCommentsMax: maxValue});
+                              return;
+                            }
+                            const newMax = Math.min(parseInt(value) || maxValue, maxValue);
                             const min = filters.avgCommentsMin || 0;
-                            if (newMax >= min) {
+                            if (newMax >= min && newMax <= maxValue) {
                               setFilters({...filters, avgCommentsMax: newMax});
                             }
                           }}
+                          style={{ padding: '0.5rem', fontSize: '0.875rem' }}
                         />
-                      </RangeSliderWrapper>
-                    </RangeSliderContainer>
-                    <RangeValue>
-                      <span>{filters.avgCommentsMin.toLocaleString()}</span>
-                      <span>{filters.avgCommentsMax.toLocaleString()}</span>
-                    </RangeValue>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

@@ -1061,12 +1061,45 @@ const IngestTab: React.FC = () => {
   };
 
   // URL 복사 함수
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text).then(() => {
-      toast.success('클립보드에 복사되었습니다');
-    }).catch(() => {
+  const copyToClipboard = async (text: string) => {
+    try {
+      // 최신 브라우저 API 사용
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        toast.success('클립보드에 복사되었습니다');
+        return;
+      }
+      
+      // Fallback: 구형 브라우저나 HTTP 환경
+      const textArea = document.createElement('textarea');
+      textArea.value = text;
+      textArea.style.position = 'fixed';
+      textArea.style.left = '-999999px';
+      textArea.style.top = '-999999px';
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      
+      try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+          toast.success('클립보드에 복사되었습니다');
+        } else {
+          throw new Error('execCommand failed');
+        }
+      } catch (err) {
+        // 최후의 수단: 사용자에게 직접 복사하도록 안내
+        textArea.remove();
+        toast.error('복사에 실패했습니다. 텍스트를 직접 선택해서 복사해주세요.');
+        console.error('복사 실패:', err);
+        return;
+      }
+      
+      document.body.removeChild(textArea);
+    } catch (err) {
       toast.error('복사에 실패했습니다');
-    });
+      console.error('복사 실패:', err);
+    }
   };
 
   // 전체 URL 복사 함수
@@ -1603,10 +1636,6 @@ const IngestTab: React.FC = () => {
               placeholder="Instagram 프로필 URL을 한 줄에 하나씩 입력하세요&#10;예: https://www.instagram.com/username1/&#10;https://www.instagram.com/username2/"
               required
             />
-            <InfoText>
-              프로필 URL만 입력하세요 (릴스 URL 제외). BrightData API를 사용하여 실제 데이터를 수집합니다. 
-              스냅샷 생성에 5-15분 정도 소요될 수 있습니다.
-            </InfoText>
           </FormGroup>
           
           <FormGroup>
