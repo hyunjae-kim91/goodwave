@@ -7,6 +7,7 @@ from app.db.database import get_db
 from app.db import models
 from app.services.campaign_reel_collection_service import CampaignReelCollectionService
 from app.services.collection_worker import stop_collection_worker, get_worker_status
+from app.services.campaign_schedule_runner import get_campaign_schedule_status
 from app.utils.sequence_fixer import fix_all_sequences, fix_table_sequence
 
 KST_OFFSET = timedelta(hours=9)
@@ -392,6 +393,25 @@ async def get_collection_worker_status():
         
     except Exception as e:
         print(f"Error getting collection worker status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.get("/campaign-schedule-runner-status")
+async def get_campaign_schedule_runner_status():
+    """캠페인 스케줄러의 현재 상태 조회"""
+    try:
+        status = get_campaign_schedule_status()
+        kst_now = now_kst()
+        
+        return {
+            "schedule_runner_status": status,
+            "current_time_kst": kst_now.strftime('%Y-%m-%d %H:%M:%S'),
+            "current_hour_kst": kst_now.hour,
+            "should_run_now": kst_now.hour == 9,
+            "message": f"Schedule runner is {'running' if status.get('is_running') else 'stopped'}"
+        }
+        
+    except Exception as e:
+        print(f"Error getting campaign schedule runner status: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/cancel-processing-jobs")

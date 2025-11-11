@@ -243,15 +243,65 @@ chmod +x setup_cron.sh
 3. **S3 업로드 오류**: AWS 자격 증명 및 버킷 권한 확인
 4. **OpenAI API 오류**: API 키 및 사용량 한도 확인
 
-### 로그 확인
+### 스케줄 상태 확인
+
+#### 1. API를 통한 확인
+
+```bash
+# 캠페인 스케줄러 상태 확인
+curl http://localhost:8000/api/admin/campaign-schedule-runner-status
+
+# 수집 워커 상태 확인
+curl http://localhost:8000/api/admin/collection-worker-status
+```
+
+#### 2. 컨테이너 내에서 직접 확인
+
+```bash
+# 컨테이너 접속
+docker exec -it <container_name> /bin/bash
+
+# Cron job이 등록되어 있는지 확인
+crontab -l
+
+# Cron job 로그 확인
+tail -f /var/log/goodwave_cron.log
+
+# 또는 최근 로그 확인
+tail -n 100 /var/log/goodwave_cron.log
+
+# Python 프로세스 확인 (백그라운드 스케줄러)
+ps aux | grep python | grep campaign-schedule-runner
+
+# 현재 KST 시간 확인 (스크립트 내부에서 사용하는 방식)
+python3 -c "from datetime import datetime, timedelta; kst = datetime.utcnow() + timedelta(hours=9); print(f'Current KST: {kst.strftime(\"%Y-%m-%d %H:%M:%S\")}')"
+
+# Cron job이 실행되는지 테스트
+# (KST 오전 9시가 아닐 때는 스킵 메시지가 출력됨)
+python3 /path/to/backend/cron_job.py
+```
+
+#### 3. 로그 확인
+
 ```bash
 # Cron 작업 로그
 tail -f /var/log/goodwave_cron.log
 
-# 백엔드 로그
-# uvicorn 실행 시 콘솔에서 확인
+# 백엔드 애플리케이션 로그
+# uvicorn 실행 시 콘솔에서 확인하거나
+docker logs <container_name> -f
 
 # 현재 cron 작업 확인
 crontab -l
-``
+```
+
+#### 4. 수집 스케줄 확인
+
+```bash
+# API를 통해 활성 스케줄 확인
+curl http://localhost:8000/api/admin/collection-schedules
+
+# 또는 컨테이너 내에서 직접 DB 확인
+docker exec -it <container_name> psql -U <db_user> -d <db_name> -c "SELECT * FROM collection_schedules WHERE is_active = true;"
+```
 
