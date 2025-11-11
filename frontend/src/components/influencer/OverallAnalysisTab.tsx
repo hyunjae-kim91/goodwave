@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import styled from 'styled-components';
 import {
   BarChart3,
@@ -60,7 +60,9 @@ interface OverrideFormState {
 }
 
 const Container = styled.div`
-  max-width: 1200px;
+  width: 100%;
+  max-width: 100%;
+  padding: 0 0.5rem;
 `;
 
 const Title = styled.h1`
@@ -75,10 +77,12 @@ const Title = styled.h1`
 
 const Section = styled.div`
   background: white;
-  padding: 1.5rem;
+  padding: 1rem;
   border-radius: 8px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
   margin-bottom: 1.5rem;
+  width: 100%;
+  box-sizing: border-box;
 `;
 
 const SectionTitle = styled.h2`
@@ -200,8 +204,8 @@ const RangeSlider = styled.input<{ isMin?: boolean }>`
   background: transparent;
   outline: none;
   -webkit-appearance: none;
-  pointer-events: ${props => props.isMin ? 'auto' : 'auto'};
-  z-index: ${props => props.isMin ? 2 : 3};
+  pointer-events: auto;
+  z-index: ${props => props.isMin ? 3 : 2};
   
   &::-webkit-slider-thumb {
     -webkit-appearance: none;
@@ -212,7 +216,7 @@ const RangeSlider = styled.input<{ isMin?: boolean }>`
     background: #3498db;
     cursor: pointer;
     position: relative;
-    z-index: 4;
+    z-index: 5;
   }
   
   &::-moz-range-thumb {
@@ -223,7 +227,7 @@ const RangeSlider = styled.input<{ isMin?: boolean }>`
     cursor: pointer;
     border: none;
     position: relative;
-    z-index: 4;
+    z-index: 5;
   }
 `;
 
@@ -335,6 +339,9 @@ const TableContainer = styled.div`
   overflow-x: auto;
   border-radius: 8px;
   border: 1px solid #dee2e6;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 `;
 
 const Table = styled.table`
@@ -349,9 +356,11 @@ const TableHeader = styled.th`
   text-align: left;
   font-weight: 600;
   color: #495057;
-  font-size: 0.75rem;
+  font-size: 0.875rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  white-space: nowrap;
+  min-width: 80px;
 `;
 
 const TableCell = styled.td`
@@ -368,6 +377,36 @@ const TableRow = styled.tr<{ isEven?: boolean }>`
 const UsernameBadge = styled.div`
   font-weight: 600;
   color: #2c3e50;
+`;
+
+const PaginationContainer = styled.div`
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  padding: 1rem;
+`;
+
+const PaginationButton = styled.button`
+  padding: 0.5rem 1rem;
+  background-color: ${props => props.disabled ? '#e9ecef' : '#3498db'};
+  color: ${props => props.disabled ? '#6c757d' : 'white'};
+  border: none;
+  border-radius: 4px;
+  cursor: ${props => props.disabled ? 'not-allowed' : 'pointer'};
+  font-size: 0.875rem;
+  font-weight: 600;
+  
+  &:hover:not(:disabled) {
+    background-color: #2980b9;
+  }
+`;
+
+const PaginationInfo = styled.span`
+  font-size: 0.875rem;
+  color: #495057;
+  margin: 0 0.5rem;
 `;
 
 const StatItem = styled.div`
@@ -672,6 +711,10 @@ const OverallAnalysisTab: React.FC = () => {
   const [isSavingAnalysisEdit, setIsSavingAnalysisEdit] = useState(false);
   // 필터 상태
   const [filterExpanded, setFilterExpanded] = useState(false);
+  // 페이지네이션 상태
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+  
   const [filters, setFilters] = useState<{
     username: string;
     followersMin: number;
@@ -690,11 +733,11 @@ const OverallAnalysisTab: React.FC = () => {
   }>({
     username: '',
     followersMin: 0,
-    followersMax: 10000000,
+    followersMax: 10000, // 초기값은 작게 설정, 데이터 로드 후 실제 최대값으로 업데이트됨
     avgLikesMin: 0,
-    avgLikesMax: 1000000,
+    avgLikesMax: 1000, // 초기값은 작게 설정, 데이터 로드 후 실제 최대값으로 업데이트됨
     avgCommentsMin: 0,
-    avgCommentsMax: 100000,
+    avgCommentsMax: 100, // 초기값은 작게 설정, 데이터 로드 후 실제 최대값으로 업데이트됨
     grade: '',
     motivation1: '',
     motivation2: '',
@@ -704,21 +747,46 @@ const OverallAnalysisTab: React.FC = () => {
     accountType: ''
   });
 
+  // 필터 변경 시 첫 페이지로 리셋
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filters.username, filters.grade, filters.motivation1, filters.motivation2, filters.category1, filters.category2, filters.accountType, filters.memo]);
+
   // 필터 옵션 정의
   const gradeOptions = ['', '레드', '블루', '골드', '프리미엄'];
   const motivationOptions = ['', '실용정보', '리뷰', '스토리', '자기계발', '웰니스', '프리미엄', '감성', '유머', '비주얼'];
   const categoryOptions = ['', '리빙', '맛집', '뷰티', '여행', '운동/레저', '육아/가족', '일상', '패션', '푸드'];
   
+  // 실제 데이터에서 distinct한 계정 유형 추출
+  const accountTypeOptions = useMemo(() => {
+    const distinctTypes = new Set<string>();
+    analysisData.forEach(data => {
+      if (data.category && data.category.trim() !== '') {
+        distinctTypes.add(data.category);
+      }
+    });
+    const sortedTypes = Array.from(distinctTypes).sort();
+    return ['', ...sortedTypes];
+  }, [analysisData]);
+  
   // 범위 슬라이더의 최대값 계산
   const getMaxValue = (field: 'followers' | 'avgLikes' | 'avgComments'): number => {
-    if (analysisData.length === 0) return 1000000;
+    if (analysisData.length === 0) {
+      // 데이터가 없을 때는 작은 기본값 반환
+      if (field === 'followers') return 10000;
+      if (field === 'avgLikes') return 1000;
+      if (field === 'avgComments') return 100;
+      return 1000;
+    }
     const values = analysisData.map(data => {
       if (field === 'followers') return data.followers || 0;
       if (field === 'avgLikes') return data.avgLikes || 0;
       if (field === 'avgComments') return data.avgComments || 0;
       return 0;
     });
-    return Math.max(...values, 1000);
+    const maxValue = Math.max(...values);
+    // 최소값 보장 (0보다 큰 값이 없으면 작은 기본값 반환)
+    return maxValue > 0 ? maxValue : (field === 'followers' ? 10000 : field === 'avgLikes' ? 1000 : 100);
   };
 
   // 사용자 목록 로드
@@ -772,15 +840,23 @@ const OverallAnalysisTab: React.FC = () => {
 
       setAnalysisData(analysisResults);
       
-      // 필터 최대값 업데이트
-      const maxFollowers = Math.max(...analysisResults.map(r => r.followers || 0), 1000000);
-      const maxLikes = Math.max(...analysisResults.map(r => r.avgLikes || 0), 100000);
-      const maxComments = Math.max(...analysisResults.map(r => r.avgComments || 0), 10000);
+      // 필터 최대값 업데이트 (실제 데이터의 최대값만 사용)
+      const maxFollowers = analysisResults.length > 0 
+        ? Math.max(...analysisResults.map(r => r.followers || 0), 0)
+        : 10000;
+      const maxLikes = analysisResults.length > 0
+        ? Math.max(...analysisResults.map(r => r.avgLikes || 0), 0)
+        : 1000;
+      const maxComments = analysisResults.length > 0
+        ? Math.max(...analysisResults.map(r => r.avgComments || 0), 0)
+        : 100;
+      
+      // 실제 최대값이 0보다 크면 사용, 아니면 작은 기본값 사용
       setFilters(prev => ({
         ...prev,
-        followersMax: Math.max(prev.followersMax, maxFollowers),
-        avgLikesMax: Math.max(prev.avgLikesMax, maxLikes),
-        avgCommentsMax: Math.max(prev.avgCommentsMax, maxComments),
+        followersMax: maxFollowers > 0 ? maxFollowers : 10000,
+        avgLikesMax: maxLikes > 0 ? maxLikes : 1000,
+        avgCommentsMax: maxComments > 0 ? maxComments : 100,
       }));
       
       toast.success('전체 분석이 완료되었습니다');
@@ -1376,7 +1452,7 @@ const OverallAnalysisTab: React.FC = () => {
           
           {filterExpanded && (
             <div style={{ marginTop: '1rem' }}>
-              {/* 첫 번째 줄: 아이디, 등급, 계정 유형 */}
+              {/* 첫 번째 줄: 아이디, 등급, 계정 유형 (각각 밑에 슬라이더) */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
                 <div>
                   <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>아이디</label>
@@ -1389,6 +1465,53 @@ const OverallAnalysisTab: React.FC = () => {
                       <option key={data.username} value={data.username}>@{data.username}</option>
                     ))}
                   </Select>
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
+                      팔로워 수
+                    </label>
+                    <RangeSliderContainer>
+                      <RangeSliderWrapper>
+                        <RangeSliderTrack />
+                        <RangeSliderActiveTrack
+                          left={(filters.followersMin || 0) / getMaxValue('followers') * 100}
+                          width={((Math.min(filters.followersMax || getMaxValue('followers'), getMaxValue('followers'))) - (filters.followersMin || 0)) / getMaxValue('followers') * 100}
+                        />
+                        <RangeSlider
+                          type="range"
+                          min="0"
+                          max={getMaxValue('followers')}
+                          value={filters.followersMin || 0}
+                          isMin={true}
+                          onChange={(e) => {
+                            const newMin = parseInt(e.target.value) || 0;
+                            const max = filters.followersMax || getMaxValue('followers');
+                            if (newMin <= max) {
+                              setFilters({...filters, followersMin: newMin});
+                            }
+                          }}
+                        />
+                        <RangeSlider
+                          type="range"
+                          min="0"
+                          max={getMaxValue('followers')}
+                          value={Math.min(filters.followersMax || getMaxValue('followers'), getMaxValue('followers'))}
+                          isMin={false}
+                          onChange={(e) => {
+                            const maxValue = getMaxValue('followers');
+                            const newMax = Math.min(parseInt(e.target.value) || maxValue, maxValue);
+                            const min = filters.followersMin || 0;
+                            if (newMax >= min) {
+                              setFilters({...filters, followersMax: newMax});
+                            }
+                          }}
+                        />
+                      </RangeSliderWrapper>
+                    </RangeSliderContainer>
+                    <RangeValue>
+                      <span>{filters.followersMin.toLocaleString()}</span>
+                      <span>{filters.followersMax.toLocaleString()}</span>
+                    </RangeValue>
+                  </div>
                 </div>
                 <div>
                   <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>등급</label>
@@ -1400,6 +1523,53 @@ const OverallAnalysisTab: React.FC = () => {
                       <option key={option} value={option}>{option || '전체'}</option>
                     ))}
                   </Select>
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
+                      평균 좋아요 수
+                    </label>
+                    <RangeSliderContainer>
+                      <RangeSliderWrapper>
+                        <RangeSliderTrack />
+                        <RangeSliderActiveTrack
+                          left={(filters.avgLikesMin || 0) / getMaxValue('avgLikes') * 100}
+                          width={((Math.min(filters.avgLikesMax || getMaxValue('avgLikes'), getMaxValue('avgLikes'))) - (filters.avgLikesMin || 0)) / getMaxValue('avgLikes') * 100}
+                        />
+                        <RangeSlider
+                          type="range"
+                          min="0"
+                          max={getMaxValue('avgLikes')}
+                          value={filters.avgLikesMin || 0}
+                          isMin={true}
+                          onChange={(e) => {
+                            const newMin = parseInt(e.target.value) || 0;
+                            const max = filters.avgLikesMax || getMaxValue('avgLikes');
+                            if (newMin <= max) {
+                              setFilters({...filters, avgLikesMin: newMin});
+                            }
+                          }}
+                        />
+                        <RangeSlider
+                          type="range"
+                          min="0"
+                          max={getMaxValue('avgLikes')}
+                          value={Math.min(filters.avgLikesMax || getMaxValue('avgLikes'), getMaxValue('avgLikes'))}
+                          isMin={false}
+                          onChange={(e) => {
+                            const maxValue = getMaxValue('avgLikes');
+                            const newMax = Math.min(parseInt(e.target.value) || maxValue, maxValue);
+                            const min = filters.avgLikesMin || 0;
+                            if (newMax >= min) {
+                              setFilters({...filters, avgLikesMax: newMax});
+                            }
+                          }}
+                        />
+                      </RangeSliderWrapper>
+                    </RangeSliderContainer>
+                    <RangeValue>
+                      <span>{filters.avgLikesMin.toLocaleString()}</span>
+                      <span>{filters.avgLikesMax.toLocaleString()}</span>
+                    </RangeValue>
+                  </div>
                 </div>
                 <div>
                   <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>계정 유형</label>
@@ -1407,156 +1577,61 @@ const OverallAnalysisTab: React.FC = () => {
                     value={filters.accountType}
                     onChange={(e) => setFilters({...filters, accountType: e.target.value})}
                   >
-                    {categoryOptions.map(option => (
+                    {accountTypeOptions.map(option => (
                       <option key={option} value={option}>{option || '전체'}</option>
                     ))}
                   </Select>
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
+                      평균 댓글 수
+                    </label>
+                    <RangeSliderContainer>
+                      <RangeSliderWrapper>
+                        <RangeSliderTrack />
+                        <RangeSliderActiveTrack
+                          left={(filters.avgCommentsMin || 0) / getMaxValue('avgComments') * 100}
+                          width={((Math.min(filters.avgCommentsMax || getMaxValue('avgComments'), getMaxValue('avgComments'))) - (filters.avgCommentsMin || 0)) / getMaxValue('avgComments') * 100}
+                        />
+                        <RangeSlider
+                          type="range"
+                          min="0"
+                          max={getMaxValue('avgComments')}
+                          value={filters.avgCommentsMin || 0}
+                          isMin={true}
+                          onChange={(e) => {
+                            const newMin = parseInt(e.target.value) || 0;
+                            const max = filters.avgCommentsMax || getMaxValue('avgComments');
+                            if (newMin <= max) {
+                              setFilters({...filters, avgCommentsMin: newMin});
+                            }
+                          }}
+                        />
+                        <RangeSlider
+                          type="range"
+                          min="0"
+                          max={getMaxValue('avgComments')}
+                          value={Math.min(filters.avgCommentsMax || getMaxValue('avgComments'), getMaxValue('avgComments'))}
+                          isMin={false}
+                          onChange={(e) => {
+                            const maxValue = getMaxValue('avgComments');
+                            const newMax = Math.min(parseInt(e.target.value) || maxValue, maxValue);
+                            const min = filters.avgCommentsMin || 0;
+                            if (newMax >= min) {
+                              setFilters({...filters, avgCommentsMax: newMax});
+                            }
+                          }}
+                        />
+                      </RangeSliderWrapper>
+                    </RangeSliderContainer>
+                    <RangeValue>
+                      <span>{filters.avgCommentsMin.toLocaleString()}</span>
+                      <span>{filters.avgCommentsMax.toLocaleString()}</span>
+                    </RangeValue>
+                  </div>
                 </div>
               </div>
 
-              {/* 두 번째 줄: 평균 팔로워 수, 평균 좋아요 수, 평균 댓글 수 (슬라이더) */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
-                <div>
-                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
-                    팔로워 수
-                  </label>
-                  <RangeSliderContainer>
-                    <RangeSliderWrapper>
-                      <RangeSliderTrack />
-                      <RangeSliderActiveTrack
-                        left={(filters.followersMin || 0) / getMaxValue('followers') * 100}
-                        width={((filters.followersMax || getMaxValue('followers')) - (filters.followersMin || 0)) / getMaxValue('followers') * 100}
-                      />
-                      <RangeSlider
-                        type="range"
-                        min="0"
-                        max={getMaxValue('followers')}
-                        value={filters.followersMin || 0}
-                        isMin={true}
-                        onChange={(e) => {
-                          const newMin = parseInt(e.target.value) || 0;
-                          const max = filters.followersMax || getMaxValue('followers');
-                          if (newMin <= max) {
-                            setFilters({...filters, followersMin: newMin});
-                          }
-                        }}
-                      />
-                      <RangeSlider
-                        type="range"
-                        min="0"
-                        max={getMaxValue('followers')}
-                        value={filters.followersMax || getMaxValue('followers')}
-                        isMin={false}
-                        onChange={(e) => {
-                          const newMax = parseInt(e.target.value) || getMaxValue('followers');
-                          const min = filters.followersMin || 0;
-                          if (newMax >= min) {
-                            setFilters({...filters, followersMax: newMax});
-                          }
-                        }}
-                      />
-                    </RangeSliderWrapper>
-                  </RangeSliderContainer>
-                  <RangeValue>
-                    <span>{filters.followersMin.toLocaleString()}</span>
-                    <span>{filters.followersMax.toLocaleString()}</span>
-                  </RangeValue>
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
-                    평균 좋아요 수
-                  </label>
-                  <RangeSliderContainer>
-                    <RangeSliderWrapper>
-                      <RangeSliderTrack />
-                      <RangeSliderActiveTrack
-                        left={(filters.avgLikesMin || 0) / getMaxValue('avgLikes') * 100}
-                        width={((filters.avgLikesMax || getMaxValue('avgLikes')) - (filters.avgLikesMin || 0)) / getMaxValue('avgLikes') * 100}
-                      />
-                      <RangeSlider
-                        type="range"
-                        min="0"
-                        max={getMaxValue('avgLikes')}
-                        value={filters.avgLikesMin || 0}
-                        isMin={true}
-                        onChange={(e) => {
-                          const newMin = parseInt(e.target.value) || 0;
-                          const max = filters.avgLikesMax || getMaxValue('avgLikes');
-                          if (newMin <= max) {
-                            setFilters({...filters, avgLikesMin: newMin});
-                          }
-                        }}
-                      />
-                      <RangeSlider
-                        type="range"
-                        min="0"
-                        max={getMaxValue('avgLikes')}
-                        value={filters.avgLikesMax || getMaxValue('avgLikes')}
-                        isMin={false}
-                        onChange={(e) => {
-                          const newMax = parseInt(e.target.value) || getMaxValue('avgLikes');
-                          const min = filters.avgLikesMin || 0;
-                          if (newMax >= min) {
-                            setFilters({...filters, avgLikesMax: newMax});
-                          }
-                        }}
-                      />
-                    </RangeSliderWrapper>
-                  </RangeSliderContainer>
-                  <RangeValue>
-                    <span>{filters.avgLikesMin.toLocaleString()}</span>
-                    <span>{filters.avgLikesMax.toLocaleString()}</span>
-                  </RangeValue>
-                </div>
-                <div>
-                  <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.5rem', display: 'block' }}>
-                    평균 댓글 수
-                  </label>
-                  <RangeSliderContainer>
-                    <RangeSliderWrapper>
-                      <RangeSliderTrack />
-                      <RangeSliderActiveTrack
-                        left={(filters.avgCommentsMin || 0) / getMaxValue('avgComments') * 100}
-                        width={((filters.avgCommentsMax || getMaxValue('avgComments')) - (filters.avgCommentsMin || 0)) / getMaxValue('avgComments') * 100}
-                      />
-                      <RangeSlider
-                        type="range"
-                        min="0"
-                        max={getMaxValue('avgComments')}
-                        value={filters.avgCommentsMin || 0}
-                        isMin={true}
-                        onChange={(e) => {
-                          const newMin = parseInt(e.target.value) || 0;
-                          const max = filters.avgCommentsMax || getMaxValue('avgComments');
-                          if (newMin <= max) {
-                            setFilters({...filters, avgCommentsMin: newMin});
-                          }
-                        }}
-                      />
-                      <RangeSlider
-                        type="range"
-                        min="0"
-                        max={getMaxValue('avgComments')}
-                        value={filters.avgCommentsMax || getMaxValue('avgComments')}
-                        isMin={false}
-                        onChange={(e) => {
-                          const newMax = parseInt(e.target.value) || getMaxValue('avgComments');
-                          const min = filters.avgCommentsMin || 0;
-                          if (newMax >= min) {
-                            setFilters({...filters, avgCommentsMax: newMax});
-                          }
-                        }}
-                      />
-                    </RangeSliderWrapper>
-                  </RangeSliderContainer>
-                  <RangeValue>
-                    <span>{filters.avgCommentsMin.toLocaleString()}</span>
-                    <span>{filters.avgCommentsMax.toLocaleString()}</span>
-                  </RangeValue>
-                </div>
-              </div>
-
-              {/* 세 번째 줄: 구독동기1, 구독동기 2, 카테고리 1, 카테고리 2 */}
+              {/* 두 번째 줄: 구독동기1, 구독동기 2, 카테고리 1, 카테고리 2 */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '1rem', marginBottom: '1rem' }}>
                 <div>
                   <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>구독동기 1</label>
@@ -1604,15 +1679,17 @@ const OverallAnalysisTab: React.FC = () => {
                 </div>
               </div>
 
-              {/* 네 번째 줄: 메모 */}
+              {/* 세 번째 줄: 메모 */}
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ fontSize: '0.75rem', color: '#6c757d', marginBottom: '0.25rem', display: 'block' }}>메모</label>
-                <Input
-                  type="text"
-                  placeholder="메모 검색"
-                  value={filters.memo}
-                  onChange={(e) => setFilters({...filters, memo: e.target.value})}
-                />
+                <div style={{ maxWidth: '50%' }}>
+                  <Input
+                    type="text"
+                    placeholder="메모 검색"
+                    value={filters.memo}
+                    onChange={(e) => setFilters({...filters, memo: e.target.value})}
+                  />
+                </div>
               </div>
 
               {/* 필터 초기화 버튼 */}
@@ -1649,31 +1726,9 @@ const OverallAnalysisTab: React.FC = () => {
       )}
 
       {/* 분석 결과 테이블 */}
-      {analysisData.length > 0 ? (
-        <Section>
-          <TableContainer>
-            <Table>
-              <thead>
-                <tr>
-                  <TableHeader>사용자명</TableHeader>
-                  <TableHeader>이름</TableHeader>
-                  <TableHeader>팔로워</TableHeader>
-                  <TableHeader>등급</TableHeader>
-                  <TableHeader>계정 유형</TableHeader>
-                  <TableHeader>평균참여율</TableHeader>
-                  <TableHeader>평균 조회수</TableHeader>
-                  <TableHeader>평균 좋아요</TableHeader>
-                  <TableHeader>평균 댓글</TableHeader>
-                  <TableHeader>구독 동기 1</TableHeader>
-                  <TableHeader>구독 동기 2</TableHeader>
-                  <TableHeader>카테고리 1</TableHeader>
-                  <TableHeader>카테고리 2</TableHeader>
-                  <TableHeader>메모</TableHeader>
-                  <TableHeader>관리</TableHeader>
-                </tr>
-              </thead>
-              <tbody>
-                {(analysisData || []).filter((data) => {
+      {analysisData.length > 0 ? (() => {
+        // 필터링된 데이터 계산
+        const filteredData = (analysisData || []).filter((data) => {
                   // 필터링 로직
                   if (filters.username && data.username !== filters.username) {
                     return false;
@@ -1725,15 +1780,47 @@ const OverallAnalysisTab: React.FC = () => {
                     return false;
                   }
                   return true;
-                }).map((data, index) => {
-                  const motivation1 = data.subscriptionMotivationStats?.[0];
-                  const motivation2 = data.subscriptionMotivationStats?.[1];
-                  const category1 = data.categoryStats?.[0];
-                  const category2 = data.categoryStats?.[1];
-                  
-                  return (
-                    <React.Fragment key={data.username}>
-                      <TableRow isEven={index % 2 === 0}>
+                });
+
+        // 페이지네이션 계산
+        const totalPages = Math.ceil(filteredData.length / itemsPerPage);
+        const startIndex = (currentPage - 1) * itemsPerPage;
+        const endIndex = startIndex + itemsPerPage;
+        const paginatedData = filteredData.slice(startIndex, endIndex);
+
+        return (
+          <Section>
+            <TableContainer>
+              <Table>
+                <thead>
+                  <tr>
+                    <TableHeader>사용자명</TableHeader>
+                    <TableHeader>이름</TableHeader>
+                    <TableHeader>팔로워</TableHeader>
+                    <TableHeader>등급</TableHeader>
+                    <TableHeader>계정 유형</TableHeader>
+                    <TableHeader>평균참여율</TableHeader>
+                    <TableHeader>평균 조회수</TableHeader>
+                    <TableHeader>평균 좋아요</TableHeader>
+                    <TableHeader>평균 댓글</TableHeader>
+                    <TableHeader>구독 동기 1</TableHeader>
+                    <TableHeader>구독 동기 2</TableHeader>
+                    <TableHeader>카테고리 1</TableHeader>
+                    <TableHeader>카테고리 2</TableHeader>
+                    <TableHeader>메모</TableHeader>
+                    <TableHeader>관리</TableHeader>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paginatedData.map((data, index) => {
+                    const motivation1 = data.subscriptionMotivationStats?.[0];
+                    const motivation2 = data.subscriptionMotivationStats?.[1];
+                    const category1 = data.categoryStats?.[0];
+                    const category2 = data.categoryStats?.[1];
+                    
+                    return (
+                      <React.Fragment key={data.username}>
+                        <TableRow isEven={index % 2 === 0}>
                       <TableCell>
                         <UsernameBadge>@{data.username}</UsernameBadge>
                       </TableCell>
@@ -1973,14 +2060,36 @@ const OverallAnalysisTab: React.FC = () => {
                           </TableCell>
                         </TableRow>
                       )}
-                    </React.Fragment>
-                  );
-                })}
-              </tbody>
-            </Table>
-          </TableContainer>
-        </Section>
-      ) : (
+                      </React.Fragment>
+                    );
+                  })}
+                </tbody>
+              </Table>
+            </TableContainer>
+            
+            {/* 페이지네이션 */}
+            {totalPages > 1 && (
+              <PaginationContainer>
+                <PaginationButton
+                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                  disabled={currentPage === 1}
+                >
+                  이전
+                </PaginationButton>
+                <PaginationInfo>
+                  {currentPage} / {totalPages} 페이지 (총 {filteredData.length}명)
+                </PaginationInfo>
+                <PaginationButton
+                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  다음
+                </PaginationButton>
+              </PaginationContainer>
+            )}
+          </Section>
+        );
+      })() : (
         <EmptyState>
           <EmptyStateIcon />
           <EmptyStateTitle>

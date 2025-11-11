@@ -373,7 +373,8 @@ async def get_unified_instagram_report(
             
             # 3순위: 집계 결과가 없으면 개별 릴스 데이터에서 가져오기
             if not subscription_motivation or not category:
-            # 인플루언서 릴스 데이터에서 분류 정보 가져오기
+                # 인플루언서 릴스 데이터에서 분류 정보 가져오기
+                influencer_reel = None
                 if reel_id and profile:
                     influencer_reel = db.query(models.InfluencerReel).filter(
                         models.InfluencerReel.reel_id == reel_id,
@@ -381,8 +382,8 @@ async def get_unified_instagram_report(
                     ).first()
                 
                 if influencer_reel:
-                        subscription_motivation = subscription_motivation or influencer_reel.subscription_motivation
-                        category = category or influencer_reel.category
+                    subscription_motivation = subscription_motivation or influencer_reel.subscription_motivation
+                    category = category or influencer_reel.category
             
             # 안전하게 job_metadata 접근
             posted_at = None

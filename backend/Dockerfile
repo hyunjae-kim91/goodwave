@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     curl \
     tzdata \
+    cron \
     libgobject-2.0-0 \
     libglib2.0-0 \
     libnss3 \

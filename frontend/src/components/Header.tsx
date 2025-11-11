@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import styled from 'styled-components';
 
 const HeaderContainer = styled.header`
@@ -12,6 +13,12 @@ const Title = styled.h1`
   margin: 0;
   font-size: 1.5rem;
   font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.2s ease;
+
+  &:hover {
+    opacity: 0.8;
+  }
 `;
 
 const Subtitle = styled.p`
@@ -21,9 +28,15 @@ const Subtitle = styled.p`
 `;
 
 const Header: React.FC = () => {
+  const navigate = useNavigate();
+
+  const handleTitleClick = () => {
+    navigate('/admin/dashboard');
+  };
+
   return (
     <HeaderContainer>
-      <Title>
+      <Title onClick={handleTitleClick}>
         핏플루언스 자동화 레포트
       </Title>
       <Subtitle>캠페인 관리 시스템</Subtitle>

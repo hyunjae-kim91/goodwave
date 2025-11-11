@@ -261,27 +261,62 @@ curl http://localhost:8000/api/admin/collection-worker-status
 # 컨테이너 접속
 docker exec -it <container_name> /bin/bash
 
-# Cron job이 등록되어 있는지 확인
+# 1. 백그라운드 스케줄러 확인 (API로 확인하는 것이 가장 정확)
+# 컨테이너 외부에서:
+curl http://localhost:8000/api/admin/campaign-schedule-runner-status
+
+# 2. Cron job이 등록되어 있는지 확인
 crontab -l
 
-# Cron job 로그 확인
-tail -f /var/log/goodwave_cron.log
+# 3. Cron 서비스가 실행 중인지 확인
+service cron status
+# 또는
+ps aux | grep cron
 
+# 4. Cron job 로그 확인 (로그 파일 경로: /var/log/goodwave_cron.log)
+tail -f /var/log/goodwave_cron.log
 # 또는 최근 로그 확인
 tail -n 100 /var/log/goodwave_cron.log
 
-# Python 프로세스 확인 (백그라운드 스케줄러)
-ps aux | grep python | grep campaign-schedule-runner
-
-# 현재 KST 시간 확인 (스크립트 내부에서 사용하는 방식)
+# 5. 현재 KST 시간 확인
 python3 -c "from datetime import datetime, timedelta; kst = datetime.utcnow() + timedelta(hours=9); print(f'Current KST: {kst.strftime(\"%Y-%m-%d %H:%M:%S\")}')"
 
-# Cron job이 실행되는지 테스트
+# 6. Cron job이 실행되는지 테스트
 # (KST 오전 9시가 아닐 때는 스킵 메시지가 출력됨)
-python3 /path/to/backend/cron_job.py
+cd /app
+python3 cron_job.py
 ```
 
-#### 3. 로그 확인
+#### 3. Cron Job 설정 및 문제 해결
+
+만약 `crontab: command not found` 오류가 발생하면:
+
+```bash
+# 1. 컨테이너 내에서 cron 설치 (임시)
+docker exec -it <container_name> apt-get update && apt-get install -y cron
+
+# 2. Cron 서비스 시작
+docker exec -it <container_name> service cron start
+
+# 3. Cron job 설정
+docker exec -it <container_name> bash -c "cd /app && chmod +x setup_cron.sh && ./setup_cron.sh"
+
+# 4. Cron 서비스가 재시작 시 자동으로 시작되도록 설정
+# (Dockerfile에 cron 설치가 포함되어 있으면 컨테이너 재빌드 필요)
+```
+
+**참고**: Dockerfile에 cron이 이미 추가되어 있으므로, 컨테이너를 재빌드하면 cron이 자동으로 설치됩니다:
+
+```bash
+# 컨테이너 재빌드
+docker-compose build backend
+docker-compose up -d backend
+
+# 재빌드 후 cron 설정
+docker exec -it goodwave_backend bash -c "cd /app && ./setup_cron.sh && service cron start"
+```
+
+#### 4. 로그 확인
 
 ```bash
 # Cron 작업 로그
@@ -295,7 +330,7 @@ docker logs <container_name> -f
 crontab -l
 ```
 
-#### 4. 수집 스케줄 확인
+#### 5. 수집 스케줄 확인
 
 ```bash
 # API를 통해 활성 스케줄 확인
