@@ -117,19 +117,24 @@ class SchedulerService:
         # 이전 스케줄에서 커밋된 데이터를 반영하기 위해 flush
         self.db.flush()
         
-        # 오늘 날짜에 이미 수집된 데이터가 있는지 확인
+        # 오늘 날짜에 이미 수집된 작업이 있는지 확인 (campaign_reel_collection_jobs 테이블 기준)
         if schedule.channel in ['instagram_post', 'instagram_reel']:
-            # 릴스/포스트의 경우, 오늘 날짜에 이미 수집된 데이터가 있는지 확인
+            # 릴스/포스트의 경우, 오늘 날짜에 완료된 수집 작업이 있는지 확인
             if schedule.channel == 'instagram_reel' or (schedule.channel == 'instagram_post' and self._is_reel_url(schedule.campaign_url)):
-                existing_today = self.db.query(models.CampaignInstagramReel).filter(
-                    models.CampaignInstagramReel.campaign_id == campaign.id,
-                    models.CampaignInstagramReel.campaign_url == schedule.campaign_url,
-                    models.CampaignInstagramReel.collection_date >= datetime.combine(today, time.min),
-                    models.CampaignInstagramReel.collection_date < datetime.combine(today + timedelta(days=1), time.min)
+                today_start = datetime.combine(today, time.min)
+                today_end = datetime.combine(today + timedelta(days=1), time.min)
+                
+                existing_today_job = self.db.query(models.CampaignReelCollectionJob).filter(
+                    models.CampaignReelCollectionJob.campaign_id == campaign.id,
+                    models.CampaignReelCollectionJob.reel_url == schedule.campaign_url,
+                    models.CampaignReelCollectionJob.status == "completed",
+                    models.CampaignReelCollectionJob.completed_at >= today_start,
+                    models.CampaignReelCollectionJob.completed_at < today_end,
+                    models.CampaignReelCollectionJob.user_posted.isnot(None)
                 ).first()
                 
-                if existing_today:
-                    print(f"⚠️ 오늘({today}) 이미 수집된 데이터가 있습니다. 스킵합니다.")
+                if existing_today_job:
+                    print(f"⚠️ 오늘({today}) 이미 완료된 수집 작업이 있습니다. 스킵합니다. (job_id: {existing_today_job.id})")
                     return
             else:
                 # 포스트의 경우 (릴스가 아닌 경우)
@@ -233,16 +238,18 @@ class SchedulerService:
             from app.services.collection_worker import CollectionWorker
             
             campaign_url = schedule.campaign_url
+            # collection_service는 모든 경우에 사용하므로 먼저 생성
+            collection_service = CampaignReelCollectionService()
+            
             if "/reel/" in campaign_url:
                 # 특정 릴스 URL인 경우
                 print(f"🔄 특정 릴스 신규 수집 시작: {campaign_url}")
                 
-                # 1. 먼저 새로운 수집 작업 생성
-                collection_service = CampaignReelCollectionService()
+                # 1. 먼저 새로운 수집 작업 생성 (중복 체크는 이미 위에서 수행했으므로 False)
                 jobs = collection_service.add_reel_collection_jobs(
                     campaign_id=campaign.id,
                     reel_urls=[campaign_url],
-                    check_existing_data=True
+                    check_existing_data=False  # 중복 체크는 _process_schedule에서 이미 수행
                 )
                 
                 if jobs:
@@ -258,113 +265,17 @@ class SchedulerService:
                     await worker.process_pending_jobs()
                     print("✅ 수집 워커 완료")
                 
-                # 4. 기존 로직: 완료된 데이터를 캠페인 테이블로 동기화
-                completed_jobs = self.db.query(models.CampaignReelCollectionJob).filter(
+                # 4. campaign_reel_collection_jobs에 작업이 생성되고 완료되면 자동으로 데이터가 저장됨
+                # 보고서와 화면 모두 campaign_reel_collection_jobs를 참조하므로 별도 동기화 불필요
+                completed_jobs_count = self.db.query(models.CampaignReelCollectionJob).filter(
                     models.CampaignReelCollectionJob.campaign_id == campaign.id,
                     models.CampaignReelCollectionJob.status == "completed",
                     models.CampaignReelCollectionJob.user_posted.isnot(None)
-                ).all()
+                ).count()
                 
-                print(f"📊 {len(completed_jobs)}개 완료된 릴스 작업 발견")
-                
-                # 오늘 날짜 기준으로 저장된 데이터 개수 추적
-                today = collection_date.date()
-                saved_count = 0
-                skipped_count = 0
-                
-                for job in completed_jobs:
-                    try:
-                        # 오늘 날짜에 이미 캠페인 테이블에 저장된 데이터가 있는지 확인
-                        existing_reel = self.db.query(models.CampaignInstagramReel).filter(
-                            models.CampaignInstagramReel.campaign_id == campaign.id,
-                            models.CampaignInstagramReel.campaign_url == job.reel_url,
-                            models.CampaignInstagramReel.collection_date >= datetime.combine(today, time.min),
-                            models.CampaignInstagramReel.collection_date < datetime.combine(today + timedelta(days=1), time.min)
-                        ).first()
-                        
-                        if not existing_reel:
-                            # job_metadata에서 게시일자 추출
-                            posted_at = job.created_at
-                            if job.job_metadata and isinstance(job.job_metadata, dict):
-                                date_posted_str = job.job_metadata.get('date_posted')
-                                if date_posted_str:
-                                    try:
-                                        posted_at = datetime.fromisoformat(date_posted_str.replace('Z', '+00:00'))
-                                    except:
-                                        pass
-                            
-                            # 릴스 ID 생성 (URL에서 추출)
-                            reel_id = job.reel_url.split('/')[-2] if job.reel_url.split('/')[-2] else f"reel_{job.id}"
-                            
-                            # 실제 프로필 데이터에서 팔로워 수와 분류 결과 가져오기
-                            profile = self.db.query(models.InfluencerProfile).filter(
-                                models.InfluencerProfile.username == job.user_posted
-                            ).first()
-                            
-                            follower_count = 0
-                            grade = "등급 없음"
-                            
-                            if profile:
-                                follower_count = profile.followers or 0
-                                # 1순위: 계정 내 전체 릴스 평균 조회수 기반 등급
-                                grade = self._determine_influencer_grade(job.user_posted)
-                                if grade:
-                                    print(f"  ✅ {job.user_posted}: 평균 조회수 기반 등급 = {grade}")
-                                else:
-                                    # 2순위: 팔로워 수 기반 등급 (단일 릴스 조회수는 사용하지 않음)
-                                    grade = self._get_grade_from_followers(follower_count)
-                                    print(f"  📊 {job.user_posted}: 팔로워 수 기반 등급 = {grade}")
-                            else:
-                                # 프로필이 없으면 수집 필요
-                                grade = "수집 필요"
-                                print(f"  ⚠️ {job.user_posted}: 프로필 없음 → {grade}")
-                            
-                            # 해당 릴스의 분류 결과 가져오기 (influencer_reels 테이블에서)
-                            influencer_reel = self.db.query(models.InfluencerReel).filter(
-                                models.InfluencerReel.reel_id == reel_id,
-                                models.InfluencerReel.profile_id == profile.id if profile else None
-                            ).first()
-                            
-                            subscription_motivation = "미분류"
-                            category = "미분류"
-                            if influencer_reel:
-                                subscription_motivation = influencer_reel.subscription_motivation or "미분류"
-                                category = influencer_reel.category or "미분류"
-                            
-                            db_campaign_reel = models.CampaignInstagramReel(
-                                campaign_id=campaign.id,
-                                campaign_url=job.reel_url,
-                                reel_id=reel_id,
-                                username=job.user_posted,
-                                display_name=job.user_posted,
-                                follower_count=follower_count,
-                                thumbnail_url=job.thumbnail_url,
-                                s3_thumbnail_url=job.s3_thumbnail_url,
-                                video_view_count=job.video_play_count or 0,
-                                subscription_motivation=subscription_motivation,
-                                category=category,
-                                grade=grade,
-                                product=campaign.product,
-                                posted_at=posted_at,
-                                collection_date=collection_date
-                            )
-                            self.db.add(db_campaign_reel)
-                            saved_count += 1
-                            print(f"  ➕ 새 릴스 추가: {job.user_posted} - {reel_id}")
-                        else:
-                            skipped_count += 1
-                            print(f"  ⏭️ 오늘({today}) 이미 저장된 릴스 스킵: {job.user_posted} - {job.reel_url}")
-                    except Exception as e:
-                        print(f"  ❌ 릴스 저장 실패: {str(e)}")
-                        import traceback
-                        traceback.print_exc()
-                        continue
-                
-                # 커밋은 상위 메서드에서 처리하므로 여기서는 flush만 수행
-                self.db.flush()
-                print(f"🎉 릴스 데이터 업데이트 완료: {saved_count}개 저장, {skipped_count}개 스킵")
+                print(f"📊 {completed_jobs_count}개 완료된 릴스 작업 (campaign_reel_collection_jobs 테이블에 저장됨)")
             else:
-                # 사용자 프로필 URL인 경우, 해당 사용자의 최신 릴스들을 가져오기
+                # 사용자 프로필 URL인 경우, 해당 사용자의 최신 릴스들을 campaign_reel_collection_jobs에 작업으로 생성
                 if "/reels" in campaign_url:
                     username = campaign_url.split('/')[-2]  # reels 앞의 username 추출
                 else:
@@ -384,56 +295,43 @@ class SchedulerService:
                     
                     print(f"📊 {len(recent_reels)}개 최신 릴스 발견")
                     
-                    grade = self._determine_influencer_grade(username) or "등급 없음"
-                    
-                    # 오늘 날짜 기준으로 저장된 데이터 개수 추적
-                    today = collection_date.date()
-                    saved_count = 0
-                    skipped_count = 0
-                    
+                    # 각 릴스 URL을 campaign_reel_collection_jobs에 작업으로 생성
+                    reel_urls = []
                     for reel in recent_reels:
-                        try:
-                            # 오늘 날짜에 이미 캠페인 테이블에 저장된 데이터가 있는지 확인
-                            existing_reel = self.db.query(models.CampaignInstagramReel).filter(
-                                models.CampaignInstagramReel.campaign_id == campaign.id,
-                                models.CampaignInstagramReel.reel_id == reel.reel_id,
-                                models.CampaignInstagramReel.collection_date >= datetime.combine(today, time.min),
-                                models.CampaignInstagramReel.collection_date < datetime.combine(today + timedelta(days=1), time.min)
-                            ).first()
-                            
-                            if not existing_reel:
-                                db_campaign_reel = models.CampaignInstagramReel(
-                                    campaign_id=campaign.id,
-                                    campaign_url=schedule.campaign_url,
-                                    reel_id=reel.reel_id,
-                                    username=username,
-                                    display_name=profile.display_name,
-                                    follower_count=profile.follower_count,
-                                    thumbnail_url=reel.thumbnail_url,
-                                    s3_thumbnail_url=reel.s3_thumbnail_url,
-                                    video_view_count=reel.video_play_count or 0,
-                                    subscription_motivation="인플루언서 데이터 기반",
-                                    category="인플루언서 데이터 기반",
-                                    grade=grade,
-                                    product=campaign.product,
-                                    posted_at=reel.posted_at,
-                                    collection_date=collection_date
-                                )
-                                self.db.add(db_campaign_reel)
-                                saved_count += 1
-                                print(f"  ➕ 새 릴스 추가: {reel.reel_id}")
-                            else:
-                                skipped_count += 1
-                                print(f"  ⏭️ 오늘({today}) 이미 저장된 릴스 스킵: {reel.reel_id}")
-                        except Exception as e:
-                            print(f"  ❌ 릴스 저장 실패: {str(e)}")
-                            import traceback
-                            traceback.print_exc()
-                            continue
+                        # reel_id로 릴스 URL 구성
+                        reel_url = f"https://www.instagram.com/reel/{reel.reel_id}/"
+                        reel_urls.append(reel_url)
                     
-                    # 커밋은 상위 메서드에서 처리하므로 여기서는 flush만 수행
-                    self.db.flush()
-                    print(f"🎉 {username} 릴스 업데이트 완료: {saved_count}개 저장, {skipped_count}개 스킵")
+                    if reel_urls:
+                        # campaign_reel_collection_jobs에 작업 생성
+                        jobs = collection_service.add_reel_collection_jobs(
+                            campaign_id=campaign.id,
+                            reel_urls=reel_urls,
+                            check_existing_data=False  # 중복 체크는 _process_schedule에서 이미 수행
+                        )
+                        
+                        if jobs:
+                            print(f"📋 {len(jobs)}개 새 수집 작업 생성됨")
+                            
+                            # 수집 작업 처리
+                            processed = collection_service.process_pending_jobs(limit=10, campaign_id=campaign.id)
+                            print(f"🔄 {processed}개 작업 BrightData로 전송됨")
+                            
+                            # 완료된 작업들 처리 (30초 대기 후)
+                            await asyncio.sleep(30)
+                            worker = CollectionWorker()
+                            await worker.process_pending_jobs()
+                            print("✅ 수집 워커 완료")
+                        
+                        completed_jobs_count = self.db.query(models.CampaignReelCollectionJob).filter(
+                            models.CampaignReelCollectionJob.campaign_id == campaign.id,
+                            models.CampaignReelCollectionJob.status == "completed",
+                            models.CampaignReelCollectionJob.user_posted.isnot(None)
+                        ).count()
+                        
+                        print(f"📊 {completed_jobs_count}개 완료된 릴스 작업 (campaign_reel_collection_jobs 테이블에 저장됨)")
+                    else:
+                        print(f"⚠️ {username}의 릴스 URL을 생성할 수 없음")
                 else:
                     print(f"❌ {username} 프로필을 찾을 수 없음")
             
