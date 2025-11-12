@@ -86,12 +86,17 @@ class SchedulerService:
                     if current_hour == schedule_hour:
                         print(f"✅ Schedule {schedule.id} matches current hour ({schedule_hour:02d}:00) - processing")
                         await self._process_schedule(schedule)
+                        # 각 스케줄 처리 후 즉시 커밋하여 다음 스케줄의 중복 체크가 정확히 작동하도록 함
+                        self.db.commit()
                         processed_count += 1
                     else:
                         skipped_count += 1
                         print(f"⏭️  Schedule {schedule.id} scheduled for {schedule_hour:02d}:00 - skipping (current: {current_hour:02d}:00)")
                 except Exception as e:
                     print(f"Error processing schedule {schedule.id}: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    self.db.rollback()
                     continue
             
             print(f"Scheduled collection completed: {processed_count} processed, {skipped_count} skipped at {now_kst()} (KST)")
@@ -108,6 +113,9 @@ class SchedulerService:
         today = collection_date.date()
         
         print(f"Processing schedule for campaign: {campaign.name}, channel: {schedule.channel}, date: {today} (KST)")
+        
+        # 이전 스케줄에서 커밋된 데이터를 반영하기 위해 flush
+        self.db.flush()
         
         # 오늘 날짜에 이미 수집된 데이터가 있는지 확인
         if schedule.channel in ['instagram_post', 'instagram_reel']:
@@ -205,7 +213,8 @@ class SchedulerService:
                 )
                 self.db.add(db_campaign_post)
             
-            self.db.commit()
+            # 커밋은 상위 메서드에서 처리하므로 여기서는 flush만 수행
+            self.db.flush()
             print(f"Collected {len(user_posts)} Instagram posts for campaign {campaign.name}")
             
         except Exception as e:
@@ -351,7 +360,8 @@ class SchedulerService:
                         traceback.print_exc()
                         continue
                 
-                self.db.commit()
+                # 커밋은 상위 메서드에서 처리하므로 여기서는 flush만 수행
+                self.db.flush()
                 print(f"🎉 릴스 데이터 업데이트 완료: {saved_count}개 저장, {skipped_count}개 스킵")
             else:
                 # 사용자 프로필 URL인 경우, 해당 사용자의 최신 릴스들을 가져오기
@@ -421,7 +431,8 @@ class SchedulerService:
                             traceback.print_exc()
                             continue
                     
-                    self.db.commit()
+                    # 커밋은 상위 메서드에서 처리하므로 여기서는 flush만 수행
+                    self.db.flush()
                     print(f"🎉 {username} 릴스 업데이트 완료: {saved_count}개 저장, {skipped_count}개 스킵")
                 else:
                     print(f"❌ {username} 프로필을 찾을 수 없음")
@@ -500,7 +511,8 @@ class SchedulerService:
 
             self.db.add(base_entry)
 
-            self.db.commit()
+            # 커밋은 상위 메서드에서 처리하므로 여기서는 flush만 수행
+            self.db.flush()
             print(f"Collected blog data for campaign {campaign.name}")
             
         except Exception as e:
