@@ -57,10 +57,11 @@ class SchedulerService:
             self.db.flush()
 
     async def run_scheduled_collection(self):
-        """정기 수집 실행"""
+        """정기 수집 실행 - 각 스케줄의 설정된 시간(시)에 맞는 것만 실행"""
         try:
             current_time = now_kst()
-            print(f"Starting scheduled collection at {current_time} (KST)")
+            current_hour = current_time.hour
+            print(f"Starting scheduled collection at {current_time} (KST) - checking for schedules at {current_hour:02d}:00")
             
             # 활성 스케줄 조회 (오늘 날짜가 수집 기간 내에 있는 것만) - 한국 시간 기준
             today = current_time.date()
@@ -72,14 +73,28 @@ class SchedulerService:
             
             print(f"Found {len(active_schedules)} active schedules")
             
+            # 각 스케줄의 설정된 시간(시)과 현재 시간(시)이 일치하는 것만 처리
+            processed_count = 0
+            skipped_count = 0
+            
             for schedule in active_schedules:
                 try:
-                    await self._process_schedule(schedule)
+                    # 스케줄 시간 확인 (기본값 9시)
+                    schedule_hour = schedule.schedule_hour if hasattr(schedule, 'schedule_hour') and schedule.schedule_hour is not None else 9
+                    
+                    # 현재 시간(시)이 스케줄 시간(시)과 일치하는지 확인
+                    if current_hour == schedule_hour:
+                        print(f"✅ Schedule {schedule.id} matches current hour ({schedule_hour:02d}:00) - processing")
+                        await self._process_schedule(schedule)
+                        processed_count += 1
+                    else:
+                        skipped_count += 1
+                        print(f"⏭️  Schedule {schedule.id} scheduled for {schedule_hour:02d}:00 - skipping (current: {current_hour:02d}:00)")
                 except Exception as e:
                     print(f"Error processing schedule {schedule.id}: {str(e)}")
                     continue
             
-            print(f"Scheduled collection completed at {now_kst()} (KST)")
+            print(f"Scheduled collection completed: {processed_count} processed, {skipped_count} skipped at {now_kst()} (KST)")
             
         except Exception as e:
             print(f"Error in scheduled collection: {str(e)}")
@@ -243,12 +258,19 @@ class SchedulerService:
                 
                 print(f"📊 {len(completed_jobs)}개 완료된 릴스 작업 발견")
                 
+                # 오늘 날짜 기준으로 저장된 데이터 개수 추적
+                today = collection_date.date()
+                saved_count = 0
+                skipped_count = 0
+                
                 for job in completed_jobs:
                     try:
-                        # 이미 캠페인 테이블에 있는지 확인
+                        # 오늘 날짜에 이미 캠페인 테이블에 저장된 데이터가 있는지 확인
                         existing_reel = self.db.query(models.CampaignInstagramReel).filter(
                             models.CampaignInstagramReel.campaign_id == campaign.id,
-                            models.CampaignInstagramReel.campaign_url == job.reel_url
+                            models.CampaignInstagramReel.campaign_url == job.reel_url,
+                            models.CampaignInstagramReel.collection_date >= datetime.combine(today, time.min),
+                            models.CampaignInstagramReel.collection_date < datetime.combine(today + timedelta(days=1), time.min)
                         ).first()
                         
                         if not existing_reel:
@@ -318,13 +340,19 @@ class SchedulerService:
                                 collection_date=collection_date
                             )
                             self.db.add(db_campaign_reel)
+                            saved_count += 1
                             print(f"  ➕ 새 릴스 추가: {job.user_posted} - {reel_id}")
+                        else:
+                            skipped_count += 1
+                            print(f"  ⏭️ 오늘({today}) 이미 저장된 릴스 스킵: {job.user_posted} - {job.reel_url}")
                     except Exception as e:
                         print(f"  ❌ 릴스 저장 실패: {str(e)}")
+                        import traceback
+                        traceback.print_exc()
                         continue
                 
                 self.db.commit()
-                print(f"🎉 릴스 데이터 업데이트 완료")
+                print(f"🎉 릴스 데이터 업데이트 완료: {saved_count}개 저장, {skipped_count}개 스킵")
             else:
                 # 사용자 프로필 URL인 경우, 해당 사용자의 최신 릴스들을 가져오기
                 if "/reels" in campaign_url:
@@ -348,12 +376,19 @@ class SchedulerService:
                     
                     grade = self._determine_influencer_grade(username) or "등급 없음"
                     
+                    # 오늘 날짜 기준으로 저장된 데이터 개수 추적
+                    today = collection_date.date()
+                    saved_count = 0
+                    skipped_count = 0
+                    
                     for reel in recent_reels:
                         try:
-                            # 이미 캠페인 테이블에 있는지 확인
+                            # 오늘 날짜에 이미 캠페인 테이블에 저장된 데이터가 있는지 확인
                             existing_reel = self.db.query(models.CampaignInstagramReel).filter(
                                 models.CampaignInstagramReel.campaign_id == campaign.id,
-                                models.CampaignInstagramReel.reel_id == reel.reel_id
+                                models.CampaignInstagramReel.reel_id == reel.reel_id,
+                                models.CampaignInstagramReel.collection_date >= datetime.combine(today, time.min),
+                                models.CampaignInstagramReel.collection_date < datetime.combine(today + timedelta(days=1), time.min)
                             ).first()
                             
                             if not existing_reel:
@@ -375,13 +410,19 @@ class SchedulerService:
                                     collection_date=collection_date
                                 )
                                 self.db.add(db_campaign_reel)
+                                saved_count += 1
                                 print(f"  ➕ 새 릴스 추가: {reel.reel_id}")
+                            else:
+                                skipped_count += 1
+                                print(f"  ⏭️ 오늘({today}) 이미 저장된 릴스 스킵: {reel.reel_id}")
                         except Exception as e:
                             print(f"  ❌ 릴스 저장 실패: {str(e)}")
+                            import traceback
+                            traceback.print_exc()
                             continue
                     
                     self.db.commit()
-                    print(f"🎉 {username} 릴스 업데이트 완료")
+                    print(f"🎉 {username} 릴스 업데이트 완료: {saved_count}개 저장, {skipped_count}개 스킵")
                 else:
                     print(f"❌ {username} 프로필을 찾을 수 없음")
             

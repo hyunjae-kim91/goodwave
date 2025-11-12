@@ -88,6 +88,7 @@ async def get_collection_schedules(db: Session = Depends(get_db)):
             'start_date': schedule.start_date,
             'end_date': schedule.end_date,
             'is_active': schedule.is_active,
+            'schedule_hour': schedule.schedule_hour if hasattr(schedule, 'schedule_hour') else 9,
             'campaign_name': schedule.campaign.name if schedule.campaign else None
         }
         for schedule in schedules
@@ -111,6 +112,44 @@ async def toggle_collection_schedule(schedule_id: int, db: Session = Depends(get
         "is_active": schedule.is_active
     }
 
+@router.put("/collection-schedules/campaign/{campaign_id}/schedule-time")
+async def update_campaign_schedule_time(
+    campaign_id: int,
+    schedule_hour: int,
+    db: Session = Depends(get_db)
+):
+    """캠페인의 모든 스케줄 시간(시) 업데이트"""
+    # 시간 유효성 검사
+    if not (0 <= schedule_hour <= 23):
+        raise HTTPException(status_code=400, detail="schedule_hour must be between 0 and 23")
+    
+    # 캠페인 존재 확인
+    campaign = db.query(models.Campaign).filter(models.Campaign.id == campaign_id).first()
+    if not campaign:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    
+    # 해당 캠페인의 모든 스케줄 업데이트
+    schedules = db.query(models.CollectionSchedule).filter(
+        models.CollectionSchedule.campaign_id == campaign_id
+    ).all()
+    
+    if not schedules:
+        raise HTTPException(status_code=404, detail="No schedules found for this campaign")
+    
+    updated_count = 0
+    for schedule in schedules:
+        schedule.schedule_hour = schedule_hour
+        updated_count += 1
+    
+    db.commit()
+    
+    return {
+        "message": f"Updated schedule time for {updated_count} schedule(s)",
+        "campaign_id": campaign_id,
+        "schedule_hour": schedule_hour,
+        "updated_count": updated_count
+    }
+
 @router.get("/campaign-collection-status")
 async def get_campaign_collection_status(db: Session = Depends(get_db)):
     """캠페인 수집 진행 현황 조회"""
@@ -132,6 +171,16 @@ async def get_campaign_collection_status(db: Session = Depends(get_db)):
                 status["product"] = campaign.product
                 status["start_date"] = campaign.start_date.isoformat() if campaign.start_date else None
                 status["end_date"] = campaign.end_date.isoformat() if campaign.end_date else None
+                
+                # 스케줄 시간 정보 추가 (첫 번째 스케줄의 시간 사용)
+                schedule = db.query(models.CollectionSchedule).filter(
+                    models.CollectionSchedule.campaign_id == campaign.id
+                ).first()
+                
+                if schedule:
+                    status["schedule_hour"] = schedule.schedule_hour if hasattr(schedule, 'schedule_hour') else 9
+                else:
+                    status["schedule_hour"] = 9
         
         return {
             "campaigns": all_status,
@@ -167,6 +216,16 @@ async def get_single_campaign_collection_status(campaign_id: int, db: Session = 
             status["product"] = campaign.product
             status["start_date"] = campaign.start_date.isoformat() if campaign.start_date else None
             status["end_date"] = campaign.end_date.isoformat() if campaign.end_date else None
+            
+            # 스케줄 시간 정보 추가 (첫 번째 스케줄의 시간 사용)
+            schedule = db.query(models.CollectionSchedule).filter(
+                models.CollectionSchedule.campaign_id == campaign.id
+            ).first()
+            
+            if schedule:
+                status["schedule_hour"] = schedule.schedule_hour if hasattr(schedule, 'schedule_hour') else 9
+            else:
+                status["schedule_hour"] = 9
         
         return status
         

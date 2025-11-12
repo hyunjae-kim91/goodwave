@@ -134,6 +134,11 @@ export const adminApi = {
   
   getInfluencerCollectionSummary: (): Promise<{ success: boolean; summary: any }> =>
     api.get('/influencer/collection-jobs/summary').then(res => res.data),
+  
+  updateCampaignScheduleTime: (campaignId: number, scheduleHour: number): Promise<{ message: string; campaign_id: number; schedule_hour: number; updated_count: number }> =>
+    api.put(`/admin/collection-schedules/campaign/${campaignId}/schedule-time`, null, {
+      params: { schedule_hour: scheduleHour }
+    }).then(res => res.data),
 };
 
 export default api;

@@ -45,6 +45,7 @@ class CollectionSchedule(Base):
     start_date = Column(DateTime, nullable=False)
     end_date = Column(DateTime, nullable=False)
     is_active = Column(Boolean, default=True)
+    schedule_hour = Column(Integer, default=9)  # 한국 시간 기준 수집 시간 (시, 0-23)
     created_at = Column(DateTime, default=func.now())
     
     # Relationships

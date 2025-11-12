@@ -44,6 +44,7 @@ interface CampaignCollectionStatus {
   product?: string;
   start_date?: string;
   end_date?: string;
+  schedule_hour?: number;
   total_jobs: number;
   status_counts: {
     pending: number;
@@ -330,19 +331,28 @@ const CampaignCollectionStatus: React.FC = () => {
   const [checkingToday, setCheckingToday] = useState(false);
   const [collecting, setCollecting] = useState(false);
   const [todayDataInfo, setTodayDataInfo] = useState<{ has_today_data: boolean; today_count: number; today_date: string } | null>(null);
+  const [scheduleHour, setScheduleHour] = useState<number>(9);
+  const [updatingSchedule, setUpdatingSchedule] = useState(false);
 
   useEffect(() => {
     fetchData();
   }, []);
 
   useEffect(() => {
-    // 캠페인이 선택되면 오늘 날짜 데이터 확인
+    // 캠페인이 선택되면 오늘 날짜 데이터 확인 및 스케줄 시간 초기화
     if (selectedCampaign) {
       checkTodayData();
+      
+      // 선택된 캠페인의 스케줄 시간 설정
+      const campaign = data?.campaigns.find(c => c.campaign_id.toString() === selectedCampaign);
+      if (campaign) {
+        setScheduleHour(campaign.schedule_hour ?? 9);
+      }
     } else {
       setTodayDataInfo(null);
+      setScheduleHour(9);
     }
-  }, [selectedCampaign]);
+  }, [selectedCampaign, data]);
 
   useEffect(() => {
     if (!data) return;
@@ -598,6 +608,33 @@ const CampaignCollectionStatus: React.FC = () => {
     }
   };
 
+  const handleUpdateScheduleTime = async () => {
+    if (!selectedCampaign) {
+      alert('캠페인을 선택해주세요.');
+      return;
+    }
+
+    if (scheduleHour < 0 || scheduleHour > 23) {
+      alert('시간은 0~23 사이의 값이어야 합니다.');
+      return;
+    }
+
+    try {
+      setUpdatingSchedule(true);
+      const campaignId = parseInt(selectedCampaign);
+      const result = await adminApi.updateCampaignScheduleTime(campaignId, scheduleHour);
+      alert(`스케줄 시간이 ${scheduleHour.toString().padStart(2, '0')}:00 (KST)로 설정되었습니다.\n\n${result.message}`);
+      
+      // 데이터 새로고침
+      await fetchData();
+    } catch (err: any) {
+      console.error('Error updating schedule time:', err);
+      alert(`스케줄 시간 업데이트 실패: ${err.response?.data?.detail || err.message || '알 수 없는 오류'}`);
+    } finally {
+      setUpdatingSchedule(false);
+    }
+  };
+
   const handleImmediateCollection = async () => {
     if (!selectedCampaign) {
       alert('캠페인을 선택해주세요.');
@@ -845,14 +882,79 @@ const CampaignCollectionStatus: React.FC = () => {
 
           <div style={{ 
             marginBottom: '1rem', 
-            padding: '0.75rem', 
-            backgroundColor: '#e7f3ff',
-            border: '1px solid #b3d9ff',
+            padding: '1rem', 
+            backgroundColor: '#f8f9fa',
+            border: '1px solid #dee2e6',
             borderRadius: '4px',
-            fontSize: '0.9rem',
-            color: '#004085'
           }}>
-            📋 <strong>캠페인 릴스 수집 큐</strong> - 아래 표에서 수집 작업 상태를 확인할 수 있습니다.
+            <div style={{ 
+              marginBottom: '1rem',
+              fontSize: '0.95rem',
+              fontWeight: 'bold',
+              color: '#495057'
+            }}>
+              ⏰ <strong>스케줄 시간 설정</strong> (한국 시간 기준)
+            </div>
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '1rem',
+              flexWrap: 'wrap'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label style={{ fontSize: '0.9rem', color: '#6c757d' }}>시간:</label>
+                <input
+                  type="number"
+                  min="0"
+                  max="23"
+                  value={scheduleHour}
+                  onChange={(e) => setScheduleHour(parseInt(e.target.value) || 0)}
+                  style={{
+                    width: '80px',
+                    padding: '0.5rem',
+                    border: '1px solid #ced4da',
+                    borderRadius: '4px',
+                    fontSize: '0.9rem',
+                    textAlign: 'center'
+                  }}
+                />
+                <span style={{ fontSize: '0.9rem', color: '#6c757d' }}>시 (KST)</span>
+              </div>
+              <button
+                onClick={handleUpdateScheduleTime}
+                disabled={updatingSchedule}
+                style={{
+                  padding: '0.5rem 1.5rem',
+                  backgroundColor: '#007bff',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: updatingSchedule ? 'not-allowed' : 'pointer',
+                  fontSize: '0.9rem',
+                  fontWeight: '500',
+                  opacity: updatingSchedule ? 0.6 : 1
+                }}
+              >
+                {updatingSchedule ? '등록 중...' : '등록'}
+              </button>
+              {campaign.schedule_hour !== undefined && (
+                <div style={{ 
+                  fontSize: '0.85rem', 
+                  color: '#6c757d',
+                  marginLeft: 'auto'
+                }}>
+                  현재 설정: {campaign.schedule_hour.toString().padStart(2, '0')}:00 (KST)
+                </div>
+              )}
+            </div>
+            <div style={{ 
+              marginTop: '0.75rem',
+              fontSize: '0.85rem',
+              color: '#6c757d',
+              fontStyle: 'italic'
+            }}>
+              💡 설정한 시간(정시)에 자동으로 데이터 수집이 실행됩니다. (예: 9시 설정 → 매일 9:00에 실행)
+            </div>
           </div>
 
           <StatusGrid>

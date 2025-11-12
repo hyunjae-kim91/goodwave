@@ -37,23 +37,18 @@ class CampaignScheduleRunner:
             await asyncio.sleep(3600)  # 1시간마다 확인
 
     async def _run_if_needed(self) -> None:
-        """KST 오전 9시에만 실행되도록 체크"""
+        """매 시간마다 실행하여 각 스케줄의 설정된 시간에 맞는 것만 처리"""
         kst_now = now_kst()
         today = kst_now.date()
         
-        # 이미 오늘 실행했으면 스킵
-        if self._last_run_date == today:
-            return
-        
-        # KST 오전 9시인지 확인 (9:00 ~ 9:59 사이)
-        if kst_now.hour != 9:
-            logger.debug(f"⏭️  현재 시간이 KST 오전 9시가 아니므로 스킵합니다. (현재: {kst_now.hour}시)")
-            return
-
-        logger.info("🎯 캠페인 스케줄 자동 실행 (날짜: %s, 시간: %s KST)", today.isoformat(), kst_now.strftime('%H:%M:%S'))
+        # 매 시간마다 실행 (스케줄러 내부에서 각 스케줄의 시간을 체크)
+        logger.info("🎯 캠페인 스케줄 체크 (날짜: %s, 시간: %s KST)", today.isoformat(), kst_now.strftime('%H:%M:%S'))
         scheduler = SchedulerService()
         await scheduler.run_scheduled_collection()
-        self._last_run_date = today
+        
+        # 날짜가 바뀌면 last_run_date 업데이트
+        if self._last_run_date != today:
+            self._last_run_date = today
 
     def _run_forever(self) -> None:
         try:

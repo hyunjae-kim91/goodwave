@@ -26,22 +26,14 @@ def now_kst() -> datetime:
     """한국 시간(KST) 기준 현재 시간 반환"""
     return datetime.utcnow() + KST_OFFSET
 
-def should_run_collection() -> bool:
-    """KST 오전 9시인지 확인 (9:00 ~ 9:59 사이)"""
-    kst_now = now_kst()
-    return kst_now.hour == 9
-
 async def main():
-    """Cron job main function"""
+    """Cron job main function - 매 시간마다 실행하여 각 스케줄의 설정된 시간에 맞는 것만 처리"""
     try:
         kst_now = now_kst()
         print(f"=== Cron Job Check at {kst_now.strftime('%Y-%m-%d %H:%M:%S')} (KST) ===")
         
-        if not should_run_collection():
-            print(f"⏭️  현재 시간이 KST 오전 9시가 아니므로 스킵합니다. (현재: {kst_now.hour}시)")
-            return
-        
-        print("=== Goodwave Data Collection Cron Job Started (KST 9:00) ===")
+        # 매 시간마다 실행 (스케줄러 내부에서 각 스케줄의 시간을 체크)
+        print("=== Goodwave Data Collection Cron Job Started ===")
         await scheduler_service.run_scheduled_collection()
         print("=== Goodwave Data Collection Cron Job Completed ===")
     except Exception as e:
