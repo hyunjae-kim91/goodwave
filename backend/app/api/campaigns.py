@@ -352,10 +352,10 @@ async def update_campaign(
                     schedule.campaign_url = new_url
                     schedule.channel = db_url.channel
 
-                db.query(models.CampaignInstagramPost).filter(
-                    models.CampaignInstagramPost.campaign_id == campaign.id,
-                    models.CampaignInstagramPost.campaign_url == old_url,
-                ).update({models.CampaignInstagramPost.campaign_url: new_url}, synchronize_session=False)
+                db.query(models.CampaignReelCollectionJob).filter(
+                    models.CampaignReelCollectionJob.campaign_id == campaign.id,
+                    models.CampaignReelCollectionJob.reel_url == old_url,
+                ).update({models.CampaignReelCollectionJob.reel_url: new_url}, synchronize_session=False)
 
                 db.query(models.CampaignInstagramReel).filter(
                     models.CampaignInstagramReel.campaign_id == campaign.id,
@@ -460,8 +460,8 @@ async def delete_campaign(campaign_id: int, db: Session = Depends(get_db)):
             ).delete(synchronize_session=False)
         
         # Delete campaign-specific data
-        db.query(models.CampaignInstagramPost).filter(
-            models.CampaignInstagramPost.campaign_id == campaign_id
+        db.query(models.CampaignReelCollectionJob).filter(
+            models.CampaignReelCollectionJob.campaign_id == campaign_id
         ).delete(synchronize_session=False)
         
         db.query(models.CampaignInstagramReel).filter(

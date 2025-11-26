@@ -137,12 +137,17 @@ class SchedulerService:
                     print(f"⚠️ 오늘({today}) 이미 완료된 수집 작업이 있습니다. 스킵합니다. (job_id: {existing_today_job.id})")
                     return
             else:
-                # 포스트의 경우 (릴스가 아닌 경우)
-                existing_today = self.db.query(models.CampaignInstagramPost).filter(
-                    models.CampaignInstagramPost.campaign_id == campaign.id,
-                    models.CampaignInstagramPost.campaign_url == schedule.campaign_url,
-                    models.CampaignInstagramPost.collection_date >= datetime.combine(today, time.min),
-                    models.CampaignInstagramPost.collection_date < datetime.combine(today + timedelta(days=1), time.min)
+                # 포스트의 경우 (릴스가 아닌 경우) - campaign_reel_collection_jobs 사용
+                today_start = datetime.combine(today, time.min)
+                today_end = datetime.combine(today + timedelta(days=1), time.min)
+                
+                existing_today = self.db.query(models.CampaignReelCollectionJob).filter(
+                    models.CampaignReelCollectionJob.campaign_id == campaign.id,
+                    models.CampaignReelCollectionJob.reel_url == schedule.campaign_url,
+                    models.CampaignReelCollectionJob.status == "completed",
+                    models.CampaignReelCollectionJob.completed_at >= today_start,
+                    models.CampaignReelCollectionJob.completed_at < today_end,
+                    models.CampaignReelCollectionJob.user_posted.isnot(None)
                 ).first()
                 
                 if existing_today:

@@ -849,7 +849,8 @@ async def get_individual_reel_classifications(username: str, db: Session = Depen
                 "description": reel.description,
                 "hashtags": reel.hashtags,
                 "media_urls": reel.media_urls,
-                "likes": reel.likes,
+                # likes가 null이거나 -1이면 0으로 치환
+                "likes": 0 if (reel.likes is None or reel.likes == -1) else reel.likes,
                 "comments": reel.num_comments,
                 "views": reel.views or reel.video_play_count,
                 "created_at": reel.created_at.isoformat() if reel.created_at else None,

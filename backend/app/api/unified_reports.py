@@ -399,7 +399,8 @@ async def get_unified_instagram_report(
                 'follower_count': follower_count,
                 's3_thumbnail_url': latest_job.s3_thumbnail_url,
                 'video_view_count': latest_job.video_play_count or 0,
-                'likes_count': latest_job.likes_count,
+                # likes_count가 null이거나 -1이면 0으로 치환
+                'likes_count': 0 if (latest_job.likes_count is None or latest_job.likes_count == -1) else latest_job.likes_count,
                 'comments_count': latest_job.comments_count,
                 'subscription_motivation': subscription_motivation,
                 'category': category,

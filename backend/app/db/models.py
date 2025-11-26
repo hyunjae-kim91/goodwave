@@ -544,6 +544,9 @@ class CampaignReelCollectionJob(Base):
         if self.job_metadata and isinstance(self.job_metadata, dict):
             date_posted = self.job_metadata.get('date_posted')
         
+        # likes_count가 null이거나 -1이면 0으로 치환
+        likes_count = 0 if (self.likes_count is None or self.likes_count == -1) else self.likes_count
+        
         return {
             "id": self.id,
             "campaign_id": self.campaign_id,
@@ -552,7 +555,7 @@ class CampaignReelCollectionJob(Base):
             "priority": self.priority,
             "user_posted": self.user_posted,
             "video_play_count": self.video_play_count,
-            "likes_count": self.likes_count,
+            "likes_count": likes_count,
             "comments_count": self.comments_count,
             "thumbnail_url": self.thumbnail_url,
             "s3_thumbnail_url": self.s3_thumbnail_url,

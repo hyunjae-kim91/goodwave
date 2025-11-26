@@ -37,6 +37,16 @@ class Settings(BaseSettings):
     # Storage
     storage_provider: str = "s3"  # local or s3
     
+    # SSH Tunnel (for local development to access RDS via EC2 bastion)
+    use_ssh_tunnel: bool = False
+    ssh_host: Optional[str] = None
+    ssh_user: Optional[str] = None
+    ssh_port: int = 22
+    ssh_pem_key_path: Optional[str] = None
+    rds_host: Optional[str] = None
+    rds_port: int = 5432
+    local_tunnel_port: int = 5433
+    
     class Config:
         env_file = ".env"
         case_sensitive = False

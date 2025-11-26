@@ -99,7 +99,7 @@ async def get_instagram_post_report(
     campaign_name: str,
     db: Session = Depends(get_db)
 ):
-    """인스타그램 게시물 보고서 데이터"""
+    """인스타그램 게시물 보고서 데이터 - campaign_reel_collection_jobs 사용"""
     try:
         # 캠페인 정보 조회
         campaign = db.query(models.Campaign).filter(
@@ -110,19 +110,115 @@ async def get_instagram_post_report(
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
         
-        # 캠페인 기간 내 릴스 데이터 조회
-        campaign_reels = (
-            db.query(models.CampaignInstagramReel)
+        # campaign_reel_collection_jobs에서 완료된 작업 조회
+        collection_jobs = (
+            db.query(models.CampaignReelCollectionJob)
             .filter(
                 and_(
-                    models.CampaignInstagramReel.campaign_id == campaign.id,
-                    models.CampaignInstagramReel.collection_date >= campaign.start_date,
-                    models.CampaignInstagramReel.collection_date <= campaign.end_date
+                    models.CampaignReelCollectionJob.campaign_id == campaign.id,
+                    models.CampaignReelCollectionJob.status == "completed",
+                    models.CampaignReelCollectionJob.user_posted.isnot(None),
+                    models.CampaignReelCollectionJob.completed_at >= campaign.start_date,
+                    models.CampaignReelCollectionJob.completed_at <= campaign.end_date
                 )
             )
-            .order_by(models.CampaignInstagramReel.collection_date.asc())
+            .order_by(models.CampaignReelCollectionJob.completed_at.asc())
             .all()
         )
+        
+        # campaign_instagram_reels와 조인하여 추가 데이터 가져오기
+        # reel_url에서 reel_id 추출 함수
+        def extract_reel_id_from_url(url: str) -> Optional[str]:
+            try:
+                if '/reel/' in url:
+                    parts = url.split('/reel/')
+                    if len(parts) > 1:
+                        reel_id = parts[1].split('/')[0].split('?')[0]
+                        return reel_id
+            except Exception:
+                pass
+            return None
+        
+        # 각 job에 대해 campaign_instagram_reels에서 추가 데이터 조회
+        reel_data_map = {}  # reel_url -> CampaignInstagramReel 데이터
+        for job in collection_jobs:
+            reel_id = extract_reel_id_from_url(job.reel_url)
+            if reel_id:
+                # reel_id로 조회
+                reel_data = db.query(models.CampaignInstagramReel).filter(
+                    and_(
+                        models.CampaignInstagramReel.campaign_id == campaign.id,
+                        models.CampaignInstagramReel.reel_id == reel_id
+                    )
+                ).first()
+                if reel_data:
+                    reel_data_map[job.reel_url] = reel_data
+            else:
+                # reel_id 추출 실패 시 campaign_url로 조회
+                reel_data = db.query(models.CampaignInstagramReel).filter(
+                    and_(
+                        models.CampaignInstagramReel.campaign_id == campaign.id,
+                        models.CampaignInstagramReel.campaign_url == job.reel_url
+                    )
+                ).first()
+                if reel_data:
+                    reel_data_map[job.reel_url] = reel_data
+        
+        # collection_jobs를 campaign_reels 형태로 변환
+        campaign_reels = []
+        for job in collection_jobs:
+            reel_data = reel_data_map.get(job.reel_url)
+            
+            # reel_id 추출
+            reel_id = extract_reel_id_from_url(job.reel_url) or ""
+            
+            # campaign_instagram_reels에서 가져온 데이터 또는 기본값 사용
+            display_name = reel_data.display_name if reel_data else None
+            follower_count = reel_data.follower_count if reel_data else None
+            subscription_motivation = reel_data.subscription_motivation if reel_data else None
+            category = reel_data.category if reel_data else None
+            grade = reel_data.grade if reel_data else None
+            product = reel_data.product if reel_data else campaign.product
+            posted_at = reel_data.posted_at if reel_data else None
+            if posted_at is None and job.job_metadata and isinstance(job.job_metadata, dict):
+                date_posted_str = job.job_metadata.get('date_posted')
+                if date_posted_str:
+                    try:
+                        from datetime import datetime
+                        posted_at = datetime.fromisoformat(date_posted_str.replace('Z', '+00:00'))
+                    except Exception:
+                        pass
+            
+            # campaign_instagram_reels에서 가져온 데이터 또는 기본값 사용
+            thumbnail_url = None
+            if reel_data:
+                thumbnail_url = reel_data.thumbnail_url
+            elif job.thumbnail_url:
+                thumbnail_url = job.thumbnail_url
+            
+            # CampaignInstagramReel 형태의 객체 생성 (호환성을 위해)
+            class ReelData:
+                def __init__(self):
+                    self.id = job.id
+                    self.reel_id = reel_id
+                    self.username = job.user_posted or ""
+                    self.display_name = display_name
+                    self.follower_count = follower_count
+                    self.thumbnail_url = thumbnail_url
+                    self.s3_thumbnail_url = job.s3_thumbnail_url
+                    self.video_view_count = job.video_play_count or 0
+                    # likes_count가 null이거나 -1이면 0으로 치환
+                    self.likes_count = 0 if (job.likes_count is None or job.likes_count == -1) else job.likes_count
+                    self.comments_count = job.comments_count
+                    self.subscription_motivation = subscription_motivation
+                    self.category = category
+                    self.grade = grade
+                    self.product = product
+                    self.posted_at = posted_at
+                    self.collection_date = job.completed_at or job.created_at
+                    self.campaign_url = job.reel_url
+            
+            campaign_reels.append(ReelData())
 
         # 날짜별 조회 수 집계
         engagement_data: Dict[str, int] = {}
@@ -276,9 +372,11 @@ async def get_instagram_post_report(
                 'username': reel.username,
                 'display_name': reel.display_name,
                 'follower_count': reel.follower_count,
+                'thumbnail_url': getattr(reel, 'thumbnail_url', None),
                 's3_thumbnail_url': reel.s3_thumbnail_url,
                 'video_view_count': reel.video_view_count,
-                'likes_count': getattr(reel, 'likes_count', None),
+                # likes_count가 null이거나 -1이면 0으로 치환
+                'likes_count': 0 if (getattr(reel, 'likes_count', None) is None or getattr(reel, 'likes_count', None) == -1) else getattr(reel, 'likes_count', 0),
                 'comments_count': getattr(reel, 'comments_count', None),
                 'subscription_motivation': reel_motivation,  # 집계 결과 우선 사용
                 'category': reel_category,  # 집계 결과 우선 사용
@@ -531,6 +629,10 @@ async def get_instagram_reel_report(
                             reel_motivation = account_motivation or reel.subscription_motivation
                             reel_category = account_category or reel.category
                             
+                            # influencer_reels의 likes 칼럼 사용 (null이거나 -1이면 0으로 치환)
+                            likes_value = reel.likes if hasattr(reel, 'likes') else (reel.likes_count if hasattr(reel, 'likes_count') else None)
+                            likes_count = 0 if (likes_value is None or likes_value == -1) else likes_value
+                            
                             reel_data = {
                                 'id': f"influencer_{reel.id}",
                                 'reel_id': reel.reel_id,
@@ -539,7 +641,7 @@ async def get_instagram_reel_report(
                                 'follower_count': influencer_profile.followers or 0,
                                 's3_thumbnail_url': reel.media_urls[0] if reel.media_urls else None,
                                 'video_view_count': latest_view_count,
-                                'likes_count': reel.likes_count,
+                                'likes_count': likes_count,
                                 'comments_count': reel.comments_count,
                                 'subscription_motivation': reel_motivation,  # 집계 결과 우선 사용
                                 'category': reel_category,  # 집계 결과 우선 사용
@@ -753,7 +855,10 @@ async def get_available_campaigns(db: Session = Depends(get_db)):
     
     # 기존 캠페인 시스템에서 수집된 데이터가 있는 캠페인들
     campaigns_with_reels = db.query(models.CampaignInstagramReel.campaign_id).distinct().subquery()
-    campaigns_with_posts = db.query(models.CampaignInstagramPost.campaign_id).distinct().subquery()
+    campaigns_with_posts = db.query(models.CampaignReelCollectionJob.campaign_id).filter(
+        models.CampaignReelCollectionJob.status == "completed",
+        models.CampaignReelCollectionJob.user_posted.isnot(None)
+    ).distinct().subquery()
     campaigns_with_blogs = db.query(models.CampaignBlog.campaign_id).distinct().subquery()
     
     # 인플루언서 분석 시스템에서 데이터가 수집된 캠페인 찾기
@@ -837,8 +942,10 @@ async def get_available_campaigns(db: Session = Depends(get_db)):
             models.CampaignInstagramReel.campaign_id == campaign.id
         ).first() is not None
         
-        has_posts = db.query(models.CampaignInstagramPost).filter(
-            models.CampaignInstagramPost.campaign_id == campaign.id
+        has_posts = db.query(models.CampaignReelCollectionJob).filter(
+            models.CampaignReelCollectionJob.campaign_id == campaign.id,
+            models.CampaignReelCollectionJob.status == "completed",
+            models.CampaignReelCollectionJob.user_posted.isnot(None)
         ).first() is not None
         
         has_blogs = db.query(models.CampaignBlog).filter(

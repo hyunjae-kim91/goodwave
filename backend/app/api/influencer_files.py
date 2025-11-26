@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from pydantic import BaseModel
 import logging
 from typing import List, Dict, Any, Optional
@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional
 from ..models.influencer_models import DeleteUsersRequest
 from ..services.influencer_service import InfluencerService
 from ..db.database import get_db
+from ..db.models import InfluencerProfile
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -15,8 +16,11 @@ router = APIRouter()
 async def get_saved_users(db: Session = Depends(get_db)):
     """저장된 인플루언서 사용자 목록을 반환합니다."""
     try:
-        influencer_service = InfluencerService(db)
-        profiles = influencer_service.get_all_profiles()
+        # selectinload를 사용하여 관계 데이터를 즉시 로드
+        profiles = db.query(InfluencerProfile).options(
+            selectinload(InfluencerProfile.influencer_posts),
+            selectinload(InfluencerProfile.influencer_reels)
+        ).order_by(InfluencerProfile.updated_at.desc()).all()
         
         users = []
         for profile in profiles:
@@ -131,7 +135,8 @@ async def get_user_data(username: str, db: Session = Depends(get_db)):
                 "profile_url": post.profile_url,
                 "date_posted": post.date_posted,
                 "num_comments": post.num_comments,
-                "likes": post.likes,
+                # likes가 null이거나 -1이면 0으로 치환
+                "likes": 0 if (post.likes is None or post.likes == -1) else post.likes,
                 "photos": post.photos or [],
                 "content_type": post.content_type,
                 "description": post.description,
@@ -151,7 +156,8 @@ async def get_user_data(username: str, db: Session = Depends(get_db)):
                 "profile_url": reel.profile_url,
                 "date_posted": reel.date_posted,
                 "num_comments": reel.num_comments,
-                "likes": reel.likes,
+                # likes가 null이거나 -1이면 0으로 치환
+                "likes": 0 if (reel.likes is None or reel.likes == -1) else reel.likes,
                 "photos": reel.photos or [],
                 "content_type": reel.content_type,
                 "description": reel.description,
@@ -242,7 +248,8 @@ async def get_parsed_reels_data(username: str, db: Session = Depends(get_db)):
                 "profile_url": reel.profile_url,
                 "date_posted": reel.date_posted,
                 "num_comments": reel.num_comments,
-                "likes": reel.likes,
+                # likes가 null이거나 -1이면 0으로 치환
+                "likes": 0 if (reel.likes is None or reel.likes == -1) else reel.likes,
                 "photos": reel.photos or [],
                 "content_type": reel.content_type,
                 "description": reel.description,
@@ -307,7 +314,8 @@ async def get_user_analysis_data(username: str, db: Session = Depends(get_db)):
                 "profile_url": reel.profile_url,
                 "date_posted": reel.date_posted,
                 "num_comments": reel.num_comments,
-                "likes": reel.likes,
+                # likes가 null이거나 -1이면 0으로 치환
+                "likes": 0 if (reel.likes is None or reel.likes == -1) else reel.likes,
                 "photos": reel.photos or [],
                 "content_type": reel.content_type,
                 "description": reel.description,

@@ -1,12 +1,37 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
+from urllib.parse import urlparse, urlunparse
 from app.core.config import settings
+from app.db.ssh_tunnel import get_tunnel_status
+
+def get_database_url() -> str:
+    """
+    Get database URL, using local tunnel port if SSH tunnel is active.
+    """
+    tunnel_status = get_tunnel_status()
+    
+    if tunnel_status.get("enabled") and tunnel_status.get("active"):
+        # SSH 터널이 활성화되어 있으면 로컬 포트로 연결
+        parsed = urlparse(settings.database_url)
+        # localhost와 터널 포트로 변경
+        new_netloc = f"{parsed.username}:{parsed.password}@127.0.0.1:{settings.local_tunnel_port}"
+        tunnel_url = urlunparse((
+            parsed.scheme,
+            new_netloc,
+            parsed.path,
+            parsed.params,
+            parsed.query,
+            parsed.fragment
+        ))
+        return tunnel_url
+    
+    return settings.database_url
 
 # 연결 풀 설정 증가 (기본값: pool_size=5, max_overflow=10)
 # 워커와 API 요청이 동시에 많이 발생할 수 있으므로 충분한 크기로 설정
 engine = create_engine(
-    settings.database_url,
+    get_database_url(),
     pool_size=20,  # 기본 연결 풀 크기 증가
     max_overflow=30,  # 오버플로우 연결 수 증가
     pool_pre_ping=True,  # 연결 유효성 검사 (연결 끊김 방지)
