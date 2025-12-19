@@ -350,7 +350,7 @@ const CampaignCollectionStatus: React.FC = () => {
   useEffect(() => {
     // 캠페인이 선택되면 오늘 날짜 데이터 확인 및 스케줄 시간 초기화
     if (selectedCampaign) {
-      checkTodayData();
+      checkTodayData(); // 블로그와 릴스 모두 확인
       
       // 선택된 캠페인의 스케줄 시간 설정
       const campaign = data?.campaigns.find(c => c.campaign_id.toString() === selectedCampaign);
@@ -723,7 +723,7 @@ const CampaignCollectionStatus: React.FC = () => {
       <Title>캠페인 수집 조회</Title>
 
       <FilterSection>
-        {selectedCampaign && todayDataInfo && !data.campaigns.find(c => c.campaign_id.toString() === selectedCampaign)?.is_blog && (
+        {selectedCampaign && todayDataInfo && (
           <div style={{ 
             marginBottom: '1rem', 
             padding: '0.75rem', 
@@ -733,10 +733,13 @@ const CampaignCollectionStatus: React.FC = () => {
             color: todayDataInfo.has_today_data ? '#155724' : '#856404',
             fontSize: '0.9rem'
           }}>
-            {todayDataInfo.has_today_data 
-              ? `✅ 오늘(${todayDataInfo.today_date}) ${todayDataInfo.today_count}개의 릴스 데이터가 이미 수집되어 있습니다.`
-              : `ℹ️ 오늘(${todayDataInfo.today_date}) 수집된 데이터가 없습니다. 즉시 수집 버튼을 클릭하여 수집을 시작하세요.`
-            }
+            {(() => {
+              const isBlog = data.campaigns.find(c => c.campaign_id.toString() === selectedCampaign)?.is_blog;
+              const dataType = isBlog ? '블로그' : '릴스';
+              return todayDataInfo.has_today_data 
+                ? `✅ 오늘(${todayDataInfo.today_date}) ${todayDataInfo.today_count}개의 ${dataType} 데이터가 이미 수집되어 있습니다.`
+                : `ℹ️ 오늘(${todayDataInfo.today_date}) 수집된 데이터가 없습니다. 즉시 수집 버튼을 클릭하여 수집을 시작하세요.`
+            })()}
           </div>
         )}
         <FilterGrid style={{ gridTemplateColumns: '1fr 1fr 1fr auto' }}>
@@ -795,7 +798,7 @@ const CampaignCollectionStatus: React.FC = () => {
           </FilterGroup>
           
           <div>
-            {selectedCampaign && !displayData.campaigns.find(c => c.campaign_id.toString() === selectedCampaign)?.is_blog && (
+            {selectedCampaign && (
               <ProcessButton 
                 onClick={handleImmediateCollection} 
                 disabled={collecting || checkingToday}

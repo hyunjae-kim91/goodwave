@@ -296,7 +296,7 @@ async def get_single_campaign_collection_status(campaign_id: int, db: Session = 
 
 @router.get("/check-today-collection/{campaign_id}")
 async def check_today_collection(campaign_id: int, db: Session = Depends(get_db)):
-    """오늘 날짜에 해당 캠페인의 릴스 데이터가 수집되었는지 확인"""
+    """오늘 날짜에 해당 캠페인의 릴스/블로그 데이터가 수집되었는지 확인"""
     try:
         # 캠페인 존재 확인
         campaign = db.query(models.Campaign).filter(models.Campaign.id == campaign_id).first()
@@ -308,19 +308,38 @@ async def check_today_collection(campaign_id: int, db: Session = Depends(get_db)
         today_start = datetime.combine(today, time.min)
         today_end = datetime.combine(today + timedelta(days=1), time.min)
         
-        # 오늘 날짜에 완료일시가 오늘인 완료된 작업 확인 (CampaignReelCollectionJob 테이블)
-        today_completed_jobs = db.query(models.CampaignReelCollectionJob).filter(
-            models.CampaignReelCollectionJob.campaign_id == campaign_id,
-            models.CampaignReelCollectionJob.status == 'completed',
-            models.CampaignReelCollectionJob.completed_at >= today_start,
-            models.CampaignReelCollectionJob.completed_at < today_end
-        ).count()
+        # 블로그 캠페인인지 확인
+        is_blog_campaign = campaign.campaign_type in ['blog', 'all']
         
-        return {
-            "has_today_data": today_completed_jobs > 0,
-            "today_count": today_completed_jobs,
-            "today_date": today.isoformat()
-        }
+        if is_blog_campaign:
+            # 블로그 캠페인의 경우 CampaignBlog 테이블에서 오늘 날짜 데이터 확인
+            today_blog_data = db.query(models.CampaignBlog).filter(
+                models.CampaignBlog.campaign_id == campaign_id,
+                models.CampaignBlog.collection_date >= today_start,
+                models.CampaignBlog.collection_date < today_end
+            ).count()
+            
+            return {
+                "has_today_data": today_blog_data > 0,
+                "today_count": today_blog_data,
+                "today_date": today.isoformat(),
+                "is_blog": True
+            }
+        else:
+            # 릴스 캠페인의 경우 CampaignReelCollectionJob 테이블에서 확인
+            today_completed_jobs = db.query(models.CampaignReelCollectionJob).filter(
+                models.CampaignReelCollectionJob.campaign_id == campaign_id,
+                models.CampaignReelCollectionJob.status == 'completed',
+                models.CampaignReelCollectionJob.completed_at >= today_start,
+                models.CampaignReelCollectionJob.completed_at < today_end
+            ).count()
+            
+            return {
+                "has_today_data": today_completed_jobs > 0,
+                "today_count": today_completed_jobs,
+                "today_date": today.isoformat(),
+                "is_blog": False
+            }
         
     except HTTPException:
         raise
@@ -451,32 +470,96 @@ async def test_blog_collection(campaign_id: int, db: Session = Depends(get_db)):
 
 @router.post("/immediate-collection/{campaign_id}")
 async def immediate_collection(campaign_id: int, db: Session = Depends(get_db)):
-    """캠페인 릴스 정보 즉시 수집"""
+    """캠페인 릴스/블로그 정보 즉시 수집"""
     try:
         # 캠페인 존재 확인
         campaign = db.query(models.Campaign).filter(models.Campaign.id == campaign_id).first()
         if not campaign:
             raise HTTPException(status_code=404, detail="Campaign not found")
         
-        # 오늘 날짜에 완료일시가 오늘인 완료된 작업이 있는지 확인
+        # 블로그 캠페인인지 확인
+        is_blog_campaign = campaign.campaign_type in ['blog', 'all']
+        
+        # 오늘 날짜 (한국 시간 기준)
         today = now_kst().date()
         today_start = datetime.combine(today, time.min)
         today_end = datetime.combine(today + timedelta(days=1), time.min)
         
-        today_completed_jobs = db.query(models.CampaignReelCollectionJob).filter(
-            models.CampaignReelCollectionJob.campaign_id == campaign_id,
-            models.CampaignReelCollectionJob.status == 'completed',
-            models.CampaignReelCollectionJob.completed_at >= today_start,
-            models.CampaignReelCollectionJob.completed_at < today_end
-        ).count()
-        
-        if today_completed_jobs > 0:
+        if is_blog_campaign:
+            # 블로그 캠페인의 경우 오늘 날짜 데이터 확인
+            today_blog_data = db.query(models.CampaignBlog).filter(
+                models.CampaignBlog.campaign_id == campaign_id,
+                models.CampaignBlog.collection_date >= today_start,
+                models.CampaignBlog.collection_date < today_end
+            ).count()
+            
+            if today_blog_data > 0:
+                return {
+                    "message": f"오늘({today.isoformat()}) 수집된 블로그 데이터가 {today_blog_data}개 있습니다. 큐에 추가하지 않습니다.",
+                    "has_today_data": True,
+                    "today_count": today_blog_data,
+                    "skipped": True
+                }
+            
+            # 블로그 즉시 수집 실행
+            from app.services.scheduler_service import SchedulerService
+            from datetime import datetime, timedelta
+            
+            KST_OFFSET = timedelta(hours=9)
+            collection_date = datetime.utcnow() + KST_OFFSET
+            
+            scheduler = SchedulerService()
+            blog_schedules = db.query(models.CollectionSchedule).filter(
+                models.CollectionSchedule.campaign_id == campaign_id,
+                models.CollectionSchedule.channel == 'blog',
+                models.CollectionSchedule.is_active == True
+            ).all()
+            
+            if not blog_schedules:
+                return {
+                    "message": "활성화된 블로그 수집 스케줄이 없습니다.",
+                    "has_today_data": False,
+                    "today_count": 0,
+                    "skipped": False
+                }
+            
+            processed_count = 0
+            try:
+                for schedule in blog_schedules:
+                    try:
+                        await scheduler._collect_campaign_blogs(schedule, campaign, collection_date)
+                        scheduler.db.commit()
+                        processed_count += 1
+                    except Exception as e:
+                        print(f"Error collecting blog for schedule {schedule.id}: {str(e)}")
+                        scheduler.db.rollback()
+                        continue
+            finally:
+                scheduler.db.close()
+            
             return {
-                "message": f"오늘({today.isoformat()}) 완료일시가 오늘인 완료된 작업이 {today_completed_jobs}개 있습니다. 큐에 추가하지 않습니다.",
-                "has_today_data": True,
-                "today_count": today_completed_jobs,
-                "skipped": True
+                "message": f"{processed_count}개의 블로그 수집 작업이 완료되었습니다.",
+                "has_today_data": False,
+                "today_count": 0,
+                "skipped": False,
+                "processed_schedules": processed_count
             }
+        else:
+            # 릴스 캠페인의 경우 기존 로직
+            today_completed_jobs = db.query(models.CampaignReelCollectionJob).filter(
+                models.CampaignReelCollectionJob.campaign_id == campaign_id,
+                models.CampaignReelCollectionJob.status == 'completed',
+                models.CampaignReelCollectionJob.completed_at >= today_start,
+                models.CampaignReelCollectionJob.completed_at < today_end
+            ).count()
+            
+            if today_completed_jobs > 0:
+                return {
+                    "message": f"오늘({today.isoformat()}) 완료일시가 오늘인 완료된 작업이 {today_completed_jobs}개 있습니다. 큐에 추가하지 않습니다.",
+                    "has_today_data": True,
+                    "today_count": today_completed_jobs,
+                    "skipped": True
+                }
         
         # 스케줄러 서비스를 통한 즉시 수집
         from app.services.scheduler_service import SchedulerService

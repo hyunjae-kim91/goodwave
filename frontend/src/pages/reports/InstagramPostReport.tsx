@@ -434,6 +434,61 @@ const InstagramPostReport: React.FC = () => {
     }
   };
 
+  // 이미지를 base64로 변환하는 헬퍼 함수
+  const convertImageToBase64 = (imageUrl: string): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous'; // CORS 허용
+      
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.width;
+        canvas.height = img.height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0);
+          try {
+            const base64 = canvas.toDataURL('image/png');
+            resolve(base64);
+          } catch (e) {
+            reject(e);
+          }
+        } else {
+          reject(new Error('Canvas context not available'));
+        }
+      };
+      
+      img.onerror = () => {
+        // 실패 시 원본 URL 반환 (html2canvas가 처리하도록)
+        resolve(imageUrl);
+      };
+      
+      img.src = imageUrl;
+    });
+  };
+
+  // 모든 이미지를 base64로 변환
+  const convertAllImagesToBase64 = async (element: HTMLElement): Promise<void> => {
+    const images = element.querySelectorAll('img');
+    const promises: Promise<void>[] = [];
+    
+    images.forEach((img) => {
+      if (img.src && (img.src.startsWith('http://') || img.src.startsWith('https://'))) {
+        const promise = convertImageToBase64(img.src)
+          .then((base64) => {
+            img.src = base64;
+          })
+          .catch((error) => {
+            console.warn('이미지 변환 실패:', img.src, error);
+            // 실패해도 계속 진행
+          });
+        promises.push(promise);
+      }
+    });
+    
+    await Promise.all(promises);
+  };
+
   const handlePDFDownload = async () => {
     if (!reportData || !selectedCampaign) return;
 
@@ -449,6 +504,13 @@ const InstagramPostReport: React.FC = () => {
         return;
       }
 
+      // TopControls (캠페인 선택, 버튼 등) 숨기기 - PDF에는 제목과 테이블만 포함
+      // TopControls는 Container의 첫 번째 자식이며 select나 button을 포함
+      const firstChild = reportElement.firstElementChild as HTMLElement;
+      if (firstChild && (firstChild.querySelector('select') || firstChild.querySelector('button'))) {
+        firstChild.style.display = 'none';
+      }
+
       // 버튼 컨테이너를 강제로 숨기기
       const buttonContainer = reportElement.querySelector('[style*="display: none"]');
       if (buttonContainer) {
@@ -456,15 +518,24 @@ const InstagramPostReport: React.FC = () => {
         (buttonContainer as HTMLElement).style.visibility = 'hidden';
       }
 
+      // 모든 이미지를 base64로 변환 (CORS 문제 해결)
+      console.log('이미지를 base64로 변환 중...');
+      await convertAllImagesToBase64(reportElement);
+      console.log('이미지 변환 완료, PDF 생성 시작...');
+
+      // 이미지 로드 대기
+      await new Promise(resolve => setTimeout(resolve, 500));
+
       // html2canvas로 페이지를 이미지로 변환
       const canvas = await html2canvas(reportElement, {
         scale: 1.5,
         useCORS: true,
-        allowTaint: false,
+        allowTaint: true, // base64 이미지는 taint되지 않으므로 true로 변경
         backgroundColor: '#ffffff',
         scrollY: -window.scrollY,
         windowWidth: 1200,
-        windowHeight: Math.max(reportElement.scrollHeight + 100, 1000)
+        windowHeight: Math.max(reportElement.scrollHeight + 100, 1000),
+        logging: false // 로그 비활성화
       });
 
       // PDF 생성
