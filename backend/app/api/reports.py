@@ -812,23 +812,25 @@ async def get_blog_report(
 
             if blog.rankings:
                 for ranking in blog.rankings:
-                    label = f"[{ranking.keyword}]"
+                    # 랭킹이 null이 아닌 것만 추가
                     if ranking.ranking is not None:
-                        label = f"{label} {ranking.ranking}위"
-                    entries.append(label)
+                        label = f"[{ranking.keyword}] {ranking.ranking}위"
+                        entries.append(label)
             elif blog.keyword:  # 레거시 데이터 호환
-                label = f"[{blog.keyword}]"
                 if blog.ranking:
-                    label = f"{label} {blog.ranking}위"
-                entries.append(label)
+                    label = f"[{blog.keyword}] {blog.ranking}위"
+                    entries.append(label)
 
-            if blog.daily_visitors and f"방문자: {blog.daily_visitors}" not in entries:
-                entries.append(f"방문자: {blog.daily_visitors}")
+            # 방문자 수 추가 (있을 경우)
+            if blog.daily_visitors:
+                visitor_label = f"방문자: {blog.daily_visitors}"
+                if visitor_label not in entries:
+                    entries.append(visitor_label)
 
-        # 문자열 형태로 정리
+        # 문자열 형태로 정리 (줄바꿈으로 구분)
         for info in blog_ranking_data.values():
             info['rankings'] = {
-                date: " | ".join(items)
+                date: "\n".join(items)
                 for date, items in info['rankings'].items()
                 if items
             }

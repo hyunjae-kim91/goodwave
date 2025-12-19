@@ -29,23 +29,33 @@ class BlogService:
     async def collect_blog_data(self, blog_url: str) -> Optional[Dict[str, Any]]:
         """블로그 게시물 데이터 수집"""
         try:
+            print(f"📝 Starting blog data collection for: {blog_url}")
+            
             # 블로그 게시물 기본 정보 수집
             blog_data = await self._get_blog_post_info(blog_url)
             if not blog_data:
+                print(f"❌ Failed to get blog post info for: {blog_url}")
                 return None
 
             if not blog_data.get('username'):
                 blog_data['username'] = self._extract_blog_username(blog_url)
 
+            print(f"✅ Blog post info collected: title='{blog_data.get('title')}', username='{blog_data.get('username')}', likes={blog_data.get('likes_count')}, comments={blog_data.get('comments_count')}")
+
             # 일일 방문자 수 수집
             daily_visitors = await self._get_daily_visitors(blog_url)
             blog_data['daily_visitors'] = daily_visitors
+            if daily_visitors == 0:
+                print(f"⚠️ Daily visitors count is 0 (may be due to API error)")
 
             blog_data['rankings'] = []
+            print(f"✅ Blog data collection completed for: {blog_url}")
             return blog_data
 
         except Exception as e:
-            print(f"Error in collect_blog_data: {str(e)}")
+            import traceback
+            print(f"❌ Error in collect_blog_data for {blog_url}: {str(e)}")
+            traceback.print_exc()
             return None
 
     async def _get_blog_post_info(self, blog_url: str) -> Optional[Dict[str, Any]]:
@@ -77,23 +87,28 @@ class BlogService:
 
     async def _get_naver_blog_with_playwright(self, url: str) -> Dict[str, Any]:
         """네이버 블로그는 playwright 스크립트를 사용해 실제 수치를 수집"""
-        # 임시로 주석처리 - RDS 마이그레이션 후 복구 필요
-        return {"title": "임시 데이터", "followers": 0, "posts": 0}
-        # loop = asyncio.get_running_loop()
-        # try:
-        #     raw_info = await loop.run_in_executor(None, get_blog_info, url)
-        # except Exception as e:
-        #     print(f"Error fetching Naver blog via Playwright: {str(e)}")
-        #     return {}
-
-        if not raw_info:
+        loop = asyncio.get_running_loop()
+        try:
+            raw_info = await loop.run_in_executor(None, get_blog_info, url)
+        except Exception as e:
+            print(f"Error fetching Naver blog via Playwright: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return {}
 
-        title = raw_info.get('post_title') or "제목 없음"
+        if not raw_info:
+            print(f"No data returned from get_blog_info for {url}")
+            return {}
+
+        # 제목 추출 (post_title 또는 title 키 확인)
+        title = raw_info.get('title') or raw_info.get('post_title') or "제목 없음"
         likes_api = await self._get_like_count(url)
-        likes = likes_api if likes_api else self._safe_int(raw_info.get('post_likes'))
-        comments = self._safe_int(raw_info.get('post_comments'))
-        posted_at = self._parse_blog_date(raw_info.get('post_date')) if raw_info.get('post_date') else None
+        # likes_count 또는 post_likes 키 확인
+        likes = likes_api if likes_api else self._safe_int(raw_info.get('likes_count') or raw_info.get('post_likes'))
+        # comments_count 또는 post_comments 키 확인
+        comments = self._safe_int(raw_info.get('comments_count') or raw_info.get('post_comments'))
+        post_date_raw = raw_info.get('post_date') or raw_info.get('posted_at')
+        posted_at = self._parse_blog_date(post_date_raw) if post_date_raw else None
         username = self._extract_blog_username(url)
 
         return {
@@ -166,23 +181,34 @@ class BlogService:
 
             api_url = self._build_naver_visitor_api_url(blog_url)
             if not api_url:
+                print(f"⚠️ Could not build visitor API URL for: {blog_url}")
                 return 0
 
             loop = asyncio.get_running_loop()
             raw_json = await loop.run_in_executor(None, get_naver_blog_visitors, api_url)
             if not raw_json:
+                print(f"⚠️ No response from visitor API: {api_url}")
                 return 0
 
             data = json.loads(raw_json)
-            # if not isinstance(data, dict) or not data:
-            #     return 0
+            if not isinstance(data, dict) or not data:
+                print(f"⚠️ Invalid visitor data format from API: {api_url}")
+                return 0
 
-            # latest_date = max(data.keys())
-            # latest_value = data.get(latest_date, 0)
-            # return int(latest_value)
+            # 최신 날짜의 방문자 수 반환
+            latest_date = max(data.keys())
+            latest_value = data.get(latest_date, 0)
+            visitor_count = int(latest_value) if latest_value else 0
+            print(f"✅ Daily visitors collected: {visitor_count} (date: {latest_date})")
+            return visitor_count
 
+        except json.JSONDecodeError as e:
+            print(f"❌ JSON decode error for daily visitors API: {str(e)}")
+            return 0
         except Exception as e:
-            print(f"Error getting daily visitors: {str(e)}")
+            print(f"❌ Error getting daily visitors: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return 0
 
     def _build_naver_visitor_api_url(self, blog_url: str) -> Optional[str]:
@@ -358,13 +384,21 @@ class BlogService:
         """네이버 블로그 검색에서 해당 URL의 순위 확인"""
         try:
             if not self.naver_client_id or not self.naver_secret_key:
+                print(f"⚠️ Naver API credentials not configured. Cannot check ranking for keyword '{keyword}'")
                 return None
 
+            print(f"   📡 Calling Naver Blog API for keyword: '{keyword}'")
             loop = asyncio.get_running_loop()
-            data = await loop.run_in_executor(None, get_naver_blog_api, keyword)
+            # API 키를 전달하여 호출
+            data = await loop.run_in_executor(
+                None, 
+                lambda: get_naver_blog_api(keyword, self.naver_client_id, self.naver_secret_key)
+            )
             if not data or not isinstance(data, dict):
-                print(f"Invalid response data for keyword '{keyword}'")
+                print(f"   ❌ Invalid response data for keyword '{keyword}': {type(data)}")
                 return None
+            
+            print(f"   ✅ Received API response for keyword '{keyword}'")
 
             items = data.get('items', [])
             if not isinstance(items, list):
@@ -375,6 +409,9 @@ class BlogService:
             if not target_key:
                 return None
 
+            print(f"   🔍 Searching through {len(items)} items for blog URL: {blog_url}")
+            print(f"   🔍 Target key: {target_key}")
+            
             for i, item in enumerate(items, 1):
                 if not item or not isinstance(item, dict):
                     continue
@@ -383,12 +420,19 @@ class BlogService:
                     continue
                 candidate_key = self._normalize_blog_url(link)
                 if candidate_key and candidate_key == target_key:
+                    print(f"   ✅ Found ranking: {i} for keyword '{keyword}'")
                     return i
+                # 디버깅: 처음 몇 개 항목의 키 출력
+                if i <= 3:
+                    print(f"      Item {i}: {candidate_key} (from {link})")
 
+            print(f"   ⚠️ Blog URL not found in top 100 for keyword '{keyword}'")
             return None  # 100위 안에 없음
 
         except Exception as e:
-            print(f"Error checking blog ranking: {str(e)}")
+            print(f"   ❌ Error checking blog ranking for keyword '{keyword}': {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def _parse_blog_date(self, date_string: str) -> Optional[datetime]:

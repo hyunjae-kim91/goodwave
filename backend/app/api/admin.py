@@ -9,6 +9,7 @@ from app.services.campaign_reel_collection_service import CampaignReelCollection
 from app.services.collection_worker import stop_collection_worker, get_worker_status
 from app.services.campaign_schedule_runner import get_campaign_schedule_status
 from app.utils.sequence_fixer import fix_all_sequences, fix_table_sequence
+from sqlalchemy.orm import selectinload
 
 KST_OFFSET = timedelta(hours=9)
 
@@ -22,31 +23,22 @@ router = APIRouter()
 async def get_admin_dashboard(db: Session = Depends(get_db)):
     """관리자 대시보드 데이터"""
     try:
-        # 전체 통계
-        total_campaigns = db.query(models.Campaign).count()
+        # 단일 쿼리로 모든 통계 계산 (성능 최적화)
+        all_campaigns = db.query(models.Campaign).all()
+        total_campaigns = len(all_campaigns)
         
-        # 캠페인 타입별 개수 계산
-        instagram_post_campaigns = db.query(models.Campaign).filter(
-            models.Campaign.campaign_type.in_(['instagram_post', 'all'])
-        ).count()
+        # 메모리에서 필터링하여 타입별 개수 계산
+        instagram_post_campaigns = sum(1 for c in all_campaigns if c.campaign_type in ['instagram_post', 'all'])
+        instagram_reel_campaigns = sum(1 for c in all_campaigns if c.campaign_type in ['instagram_reel', 'all'])
+        blog_campaigns = sum(1 for c in all_campaigns if c.campaign_type in ['blog', 'all'])
         
-        instagram_reel_campaigns = db.query(models.Campaign).filter(
-            models.Campaign.campaign_type.in_(['instagram_reel', 'all'])
-        ).count()
-        
-        blog_campaigns = db.query(models.Campaign).filter(
-            models.Campaign.campaign_type.in_(['blog', 'all'])
-        ).count()
-        
-        # 활성 캠페인 수
+        # 활성 캠페인 수 (별도 쿼리)
         active_campaigns = db.query(models.CollectionSchedule).filter(
             models.CollectionSchedule.is_active == True
         ).count()
         
-        # 캠페인 정보
-        campaigns = db.query(models.Campaign).order_by(
-            models.Campaign.created_at.desc()
-        ).all()
+        # 캠페인 정보 (최신순으로 제한하여 성능 개선)
+        campaigns = sorted(all_campaigns, key=lambda x: x.created_at if x.created_at else datetime.min, reverse=True)
         
         return {
             'statistics': {
@@ -63,17 +55,19 @@ async def get_admin_dashboard(db: Session = Depends(get_db)):
                     'product': campaign.product,
                     'campaign_type': campaign.campaign_type,
                     'budget': campaign.budget,
-                    'start_date': campaign.start_date,
-                    'end_date': campaign.end_date,
-                    'created_at': campaign.created_at
+                    'start_date': campaign.start_date.isoformat() if campaign.start_date else None,
+                    'end_date': campaign.end_date.isoformat() if campaign.end_date else None,
+                    'created_at': campaign.created_at.isoformat() if campaign.created_at else None
                 }
                 for campaign in campaigns
             ]
         }
         
     except Exception as e:
-        print(f"Error getting admin dashboard: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        import traceback
+        error_detail = f"Error getting admin dashboard: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.get("/collection-schedules")
 async def get_collection_schedules(db: Session = Depends(get_db)):
@@ -152,25 +146,90 @@ async def update_campaign_schedule_time(
 
 @router.get("/campaign-collection-status")
 async def get_campaign_collection_status(db: Session = Depends(get_db)):
-    """캠페인 수집 진행 현황 조회"""
+    """캠페인 수집 진행 현황 조회 (릴스 + 블로그)"""
     try:
         collection_service = CampaignReelCollectionService()
         
-        # 모든 캠페인의 수집 현황
+        # 모든 캠페인의 릴스 수집 현황
         all_status = collection_service.get_all_campaigns_collection_status()
         
-        # 캠페인 정보 추가
+        # 블로그 캠페인 데이터 추가
+        blog_campaigns = db.query(models.Campaign).filter(
+            models.Campaign.campaign_type.in_(['blog', 'all'])
+        ).all()
+        
+        for campaign in blog_campaigns:
+            # 이미 릴스 데이터가 있는 캠페인인지 확인
+            existing_status = next((s for s in all_status if s["campaign_id"] == campaign.id), None)
+            
+            # 블로그 데이터 조회
+            blog_data = db.query(models.CampaignBlog).filter(
+                models.CampaignBlog.campaign_id == campaign.id
+            ).options(selectinload(models.CampaignBlog.rankings)).all()
+            
+            blog_jobs = []
+            for blog in blog_data:
+                blog_jobs.append({
+                    "id": blog.id,
+                    "campaign_id": campaign.id,
+                    "blog_url": blog.campaign_url,
+                    "title": blog.title,
+                    "username": blog.username,
+                    "likes_count": blog.likes_count,
+                    "comments_count": blog.comments_count,
+                    "daily_visitors": blog.daily_visitors,
+                    "posted_at": blog.posted_at.isoformat() if blog.posted_at else None,
+                    "collection_date": blog.collection_date.isoformat() if blog.collection_date else None,
+                    "rankings": [
+                        {
+                            "keyword": ranking.keyword,
+                            "ranking": ranking.ranking
+                        }
+                        for ranking in blog.rankings
+                    ]
+                })
+            
+            if existing_status:
+                # 릴스 데이터가 있는 캠페인에 블로그 데이터 병합
+                existing_status["blog_jobs"] = blog_jobs
+                existing_status["has_blog_data"] = len(blog_jobs) > 0
+            else:
+                # 블로그 전용 캠페인인 경우 새로 추가
+                all_status.append({
+                    "campaign_id": campaign.id,
+                    "campaign_name": campaign.name,
+                    "campaign_type": campaign.campaign_type,
+                    "product": campaign.product,
+                    "start_date": campaign.start_date.isoformat() if campaign.start_date else None,
+                    "end_date": campaign.end_date.isoformat() if campaign.end_date else None,
+                    "total_jobs": len(blog_jobs),
+                    "status_counts": {
+                        "pending": 0,
+                        "processing": 0,
+                        "completed": len(blog_jobs),
+                        "failed": 0
+                    },
+                    "jobs": blog_jobs,
+                    "is_blog": True  # 블로그 데이터임을 표시
+                })
+        
+        # 캠페인 정보 추가 및 스케줄 시간 설정
         for status in all_status:
             campaign = db.query(models.Campaign).filter(
                 models.Campaign.id == status["campaign_id"]
             ).first()
             
             if campaign:
-                status["campaign_name"] = campaign.name
-                status["campaign_type"] = campaign.campaign_type
-                status["product"] = campaign.product
-                status["start_date"] = campaign.start_date.isoformat() if campaign.start_date else None
-                status["end_date"] = campaign.end_date.isoformat() if campaign.end_date else None
+                if "campaign_name" not in status:
+                    status["campaign_name"] = campaign.name
+                if "campaign_type" not in status:
+                    status["campaign_type"] = campaign.campaign_type
+                if "product" not in status:
+                    status["product"] = campaign.product
+                if "start_date" not in status:
+                    status["start_date"] = campaign.start_date.isoformat() if campaign.start_date else None
+                if "end_date" not in status:
+                    status["end_date"] = campaign.end_date.isoformat() if campaign.end_date else None
                 
                 # 스케줄 시간 정보 추가 (첫 번째 스케줄의 시간 사용)
                 schedule = db.query(models.CollectionSchedule).filter(
@@ -268,6 +327,127 @@ async def check_today_collection(campaign_id: int, db: Session = Depends(get_db)
     except Exception as e:
         print(f"Error checking today collection for {campaign_id}: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
+
+@router.post("/test-blog-collection/{campaign_id}")
+async def test_blog_collection(campaign_id: int, db: Session = Depends(get_db)):
+    """블로그 수집 API 테스트 (특정 캠페인의 블로그 스케줄 수집 테스트)"""
+    try:
+        # 캠페인 존재 확인
+        campaign = db.query(models.Campaign).filter(models.Campaign.id == campaign_id).first()
+        if not campaign:
+            raise HTTPException(status_code=404, detail="Campaign not found")
+        
+        # 블로그 스케줄 찾기
+        blog_schedules = db.query(models.CollectionSchedule).filter(
+            models.CollectionSchedule.campaign_id == campaign_id,
+            models.CollectionSchedule.channel == 'blog',
+            models.CollectionSchedule.is_active == True
+        ).all()
+        
+        if not blog_schedules:
+            return {
+                "message": f"캠페인 {campaign_id}에 활성화된 블로그 스케줄이 없습니다.",
+                "campaign_id": campaign_id,
+                "campaign_name": campaign.name,
+                "schedules_found": 0,
+                "results": []
+            }
+        
+        from app.services.scheduler_service import SchedulerService
+        from datetime import datetime, timedelta
+        
+        KST_OFFSET = timedelta(hours=9)
+        collection_date = datetime.utcnow() + KST_OFFSET
+        
+        # 새로운 스케줄러 인스턴스 생성 (테스트용)
+        scheduler = SchedulerService()
+        results = []
+        
+        for schedule in blog_schedules:
+            try:
+                print(f"Testing blog collection for schedule {schedule.id}: {schedule.campaign_url}")
+                
+                # 블로그 수집 실행 (private 메서드이지만 테스트를 위해 접근)
+                await scheduler._collect_campaign_blogs(schedule, campaign, collection_date)
+                scheduler.db.commit()
+                
+                # 스케줄러 세션에서 수집된 데이터 확인 (commit 후)
+                blog_entry = scheduler.db.query(models.CampaignBlog).filter(
+                    models.CampaignBlog.campaign_id == campaign_id,
+                    models.CampaignBlog.campaign_url == schedule.campaign_url,
+                    models.CampaignBlog.collection_date >= collection_date.replace(hour=0, minute=0, second=0, microsecond=0),
+                    models.CampaignBlog.collection_date < (collection_date.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1))
+                ).first()
+                
+                if blog_entry:
+                    rankings = scheduler.db.query(models.CampaignBlogRanking).filter(
+                        models.CampaignBlogRanking.campaign_blog_id == blog_entry.id
+                    ).all()
+                    
+                    results.append({
+                        "schedule_id": schedule.id,
+                        "blog_url": schedule.campaign_url,
+                        "success": True,
+                        "collected_data": {
+                            "title": blog_entry.title,
+                            "username": blog_entry.username,
+                            "likes_count": blog_entry.likes_count,
+                            "comments_count": blog_entry.comments_count,
+                            "daily_visitors": blog_entry.daily_visitors,
+                            "posted_at": blog_entry.posted_at.isoformat() if blog_entry.posted_at else None,
+                            "collection_date": blog_entry.collection_date.isoformat() if blog_entry.collection_date else None,
+                            "rankings": [
+                                {"keyword": r.keyword, "ranking": r.ranking}
+                                for r in rankings
+                            ]
+                        }
+                    })
+                else:
+                    # 수집은 성공했지만 DB에 저장되지 않은 경우 확인
+                    results.append({
+                        "schedule_id": schedule.id,
+                        "blog_url": schedule.campaign_url,
+                        "success": False,
+                        "message": "데이터가 수집되었지만 DB에 저장되지 않았습니다. 로그를 확인하세요.",
+                        "note": "수집은 성공했을 수 있지만, DB 조회 조건이 맞지 않거나 커밋이 되지 않았을 수 있습니다."
+                    })
+                    
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                print(f"Error testing blog collection for schedule {schedule.id}: {error_detail}")
+                results.append({
+                    "schedule_id": schedule.id,
+                    "blog_url": schedule.campaign_url,
+                    "success": False,
+                    "error": str(e),
+                    "traceback": error_detail
+                })
+            finally:
+                # 스케줄러 세션 정리
+                scheduler.db.close()
+        
+        success_count = sum(1 for r in results if r.get("success", False))
+        failed_count = len(results) - success_count
+        
+        return {
+            "message": f"블로그 수집 테스트 완료",
+            "campaign_id": campaign_id,
+            "campaign_name": campaign.name,
+            "schedules_tested": len(blog_schedules),
+            "success_count": success_count,
+            "failed_count": failed_count,
+            "results": results,
+            "note": "Playwright 기반 수집이 활성화되었습니다. 일일 방문자 수 API 오류는 무시됩니다 (기본 정보는 정상 수집됨)."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        print(f"Error in test blog collection: {error_detail}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 @router.post("/immediate-collection/{campaign_id}")
 async def immediate_collection(campaign_id: int, db: Session = Depends(get_db)):
@@ -471,6 +651,32 @@ async def get_campaign_schedule_runner_status():
         
     except Exception as e:
         print(f"Error getting campaign schedule runner status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.post("/run-scheduled-collection")
+async def run_scheduled_collection_manual(force_run_all: bool = False, run_hour: int | None = None):
+    """스케줄 수집을 즉시 1회 실행 (수동 트리거)
+
+    - force_run_all=true: schedule_hour 무시하고 모든 활성 스케줄 처리
+    - run_hour=0~23: 현재 시간 대신 해당 시간 기준으로 스케줄 매칭
+    """
+    try:
+        if run_hour is not None and not (0 <= run_hour <= 23):
+            raise HTTPException(status_code=400, detail="run_hour must be between 0 and 23")
+
+        from app.services.scheduler_service import SchedulerService
+
+        scheduler = SchedulerService()
+        result = await scheduler.run_scheduled_collection(force_run_all=force_run_all, run_hour=run_hour)
+        return {
+            "message": "Triggered scheduled collection",
+            "result": result,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error running scheduled collection manually: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @router.post("/cancel-processing-jobs")

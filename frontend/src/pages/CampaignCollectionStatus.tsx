@@ -22,19 +22,26 @@ const formatDateOnly = (dateString?: string): string => {
 interface CollectionJob {
   id: number;
   campaign_id: number;
-  reel_url: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
+  reel_url?: string;
+  blog_url?: string;
+  status?: 'pending' | 'processing' | 'completed' | 'failed';
   user_posted?: string;
   video_play_count?: number;
   likes_count?: number;
   comments_count?: number;
+  daily_visitors?: number;
   thumbnail_url?: string;
   s3_thumbnail_url?: string;
   date_posted?: string;
+  posted_at?: string;
+  collection_date?: string;
   error_message?: string;
-  created_at: string;
+  created_at?: string;
   started_at?: string;
   completed_at?: string;
+  title?: string;
+  username?: string;
+  rankings?: Array<{ keyword: string; ranking: number | null }>;
 }
 
 interface CampaignCollectionStatus {
@@ -53,6 +60,7 @@ interface CampaignCollectionStatus {
     failed: number;
   };
   jobs: CollectionJob[];
+  is_blog?: boolean;  // 블로그 데이터인지 여부
 }
 
 interface CollectionStatusResponse {
@@ -327,6 +335,7 @@ const CampaignCollectionStatus: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [selectedCampaign, setSelectedCampaign] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
+  const [selectedCampaignType, setSelectedCampaignType] = useState<string>('all');
   const [controlsExpanded, setControlsExpanded] = useState(false);
   const [checkingToday, setCheckingToday] = useState(false);
   const [collecting, setCollecting] = useState(false);
@@ -357,41 +366,47 @@ const CampaignCollectionStatus: React.FC = () => {
   useEffect(() => {
     if (!data) return;
     
-    // 캠페인이 선택되지 않은 경우 빈 결과 반환
-    if (!selectedCampaign) {
-      setFilteredData({
-        campaigns: [],
-        summary: {
-          total_campaigns: 0,
-          total_jobs: 0,
-          completed_jobs: 0,
-          failed_jobs: 0,
-          pending_jobs: 0,
-          processing_jobs: 0
-        }
-      });
-      return;
-    }
-    
     let filtered = { ...data };
     
-    // 캠페인별 필터링
-    const campaignId = parseInt(selectedCampaign);
-    filtered.campaigns = data.campaigns.filter(c => c.campaign_id === campaignId);
+    // 캠페인 종류별 필터링
+    if (selectedCampaignType !== 'all') {
+      if (selectedCampaignType === 'instagram_reel') {
+        filtered.campaigns = data.campaigns.filter(c => !c.is_blog);
+      } else if (selectedCampaignType === 'blog') {
+        filtered.campaigns = data.campaigns.filter(c => c.is_blog === true);
+      }
+    }
     
-    // 상태별 필터링
+    // 캠페인별 필터링
+    if (selectedCampaign) {
+      const campaignId = parseInt(selectedCampaign);
+      filtered.campaigns = filtered.campaigns.filter(c => c.campaign_id === campaignId);
+    } else {
+      // 캠페인이 선택되지 않은 경우 빈 결과 반환
+      filtered.campaigns = [];
+    }
+    
+    // 상태별 필터링 (릴스 작업에만 적용)
     if (selectedStatus !== 'all') {
-      filtered.campaigns = filtered.campaigns.map(campaign => ({
-        ...campaign,
-        jobs: campaign.jobs.filter(job => job.status === selectedStatus)
-      })).filter(campaign => campaign.jobs.length > 0);
+      filtered.campaigns = filtered.campaigns.map(campaign => {
+        if (campaign.is_blog) {
+          // 블로그는 상태 필터링 없이 그대로 반환
+          return campaign;
+        } else {
+          // 릴스는 상태별 필터링
+          return {
+            ...campaign,
+            jobs: campaign.jobs.filter(job => job.status === selectedStatus)
+          };
+        }
+      }).filter(campaign => campaign.jobs.length > 0);
     }
     
     // 요약 정보 재계산
     const summary = {
       total_campaigns: filtered.campaigns.length,
       total_jobs: filtered.campaigns.reduce((sum, c) => sum + c.jobs.length, 0),
-      completed_jobs: filtered.campaigns.reduce((sum, c) => sum + c.jobs.filter(j => j.status === 'completed').length, 0),
+      completed_jobs: filtered.campaigns.reduce((sum, c) => sum + c.jobs.filter(j => j.status === 'completed' || c.is_blog).length, 0),
       failed_jobs: filtered.campaigns.reduce((sum, c) => sum + c.jobs.filter(j => j.status === 'failed').length, 0),
       pending_jobs: filtered.campaigns.reduce((sum, c) => sum + c.jobs.filter(j => j.status === 'pending').length, 0),
       processing_jobs: filtered.campaigns.reduce((sum, c) => sum + c.jobs.filter(j => j.status === 'processing').length, 0)
@@ -399,7 +414,7 @@ const CampaignCollectionStatus: React.FC = () => {
     
     filtered.summary = summary;
     setFilteredData(filtered);
-  }, [data, selectedCampaign, selectedStatus]);
+  }, [data, selectedCampaign, selectedStatus, selectedCampaignType]);
 
   const fetchData = async () => {
     try {
@@ -708,7 +723,7 @@ const CampaignCollectionStatus: React.FC = () => {
       <Title>캠페인 수집 조회</Title>
 
       <FilterSection>
-        {selectedCampaign && todayDataInfo && (
+        {selectedCampaign && todayDataInfo && !data.campaigns.find(c => c.campaign_id.toString() === selectedCampaign)?.is_blog && (
           <div style={{ 
             marginBottom: '1rem', 
             padding: '0.75rem', 
@@ -724,7 +739,22 @@ const CampaignCollectionStatus: React.FC = () => {
             }
           </div>
         )}
-        <FilterGrid>
+        <FilterGrid style={{ gridTemplateColumns: '1fr 1fr 1fr auto' }}>
+          <FilterGroup>
+            <FilterLabel>캠페인 종류</FilterLabel>
+            <FilterSelect 
+              value={selectedCampaignType} 
+              onChange={(e) => {
+                setSelectedCampaignType(e.target.value);
+                setSelectedCampaign(''); // 종류 변경 시 캠페인 선택 초기화
+              }}
+            >
+              <option value="all">전체</option>
+              <option value="instagram_reel">인스타그램 릴스</option>
+              <option value="blog">네이버 블로그</option>
+            </FilterSelect>
+          </FilterGroup>
+          
           <FilterGroup>
             <FilterLabel>캠페인 선택</FilterLabel>
             <FilterSelect 
@@ -732,11 +762,20 @@ const CampaignCollectionStatus: React.FC = () => {
               onChange={(e) => setSelectedCampaign(e.target.value)}
             >
               <option value="">캠페인을 선택하세요</option>
-              {data.campaigns.map(campaign => (
-                <option key={campaign.campaign_id} value={campaign.campaign_id.toString()}>
-                  {campaign.campaign_name || `캠페인 ${campaign.campaign_id}`}
-                </option>
-              ))}
+              {data.campaigns
+                .filter(campaign => {
+                  if (selectedCampaignType === 'instagram_reel') {
+                    return !campaign.is_blog;
+                  } else if (selectedCampaignType === 'blog') {
+                    return campaign.is_blog === true;
+                  }
+                  return true;
+                })
+                .map(campaign => (
+                  <option key={campaign.campaign_id} value={campaign.campaign_id.toString()}>
+                    {campaign.campaign_name || `캠페인 ${campaign.campaign_id}`}
+                  </option>
+                ))}
             </FilterSelect>
           </FilterGroup>
           
@@ -745,6 +784,7 @@ const CampaignCollectionStatus: React.FC = () => {
             <FilterSelect 
               value={selectedStatus} 
               onChange={(e) => setSelectedStatus(e.target.value)}
+              disabled={selectedCampaignType === 'blog'} // 블로그는 상태 필터 비활성화
             >
               <option value="all">전체 상태</option>
               <option value="pending">대기중</option>
@@ -755,7 +795,7 @@ const CampaignCollectionStatus: React.FC = () => {
           </FilterGroup>
           
           <div>
-            {selectedCampaign && (
+            {selectedCampaign && !displayData.campaigns.find(c => c.campaign_id.toString() === selectedCampaign)?.is_blog && (
               <ProcessButton 
                 onClick={handleImmediateCollection} 
                 disabled={collecting || checkingToday}
@@ -986,192 +1026,319 @@ const CampaignCollectionStatus: React.FC = () => {
 
           {campaign.jobs && campaign.jobs.length > 0 ? (
             <>
-              {/* 캠페인 기간 내 없는 날짜 데이터 표시 (수집 작업 목록 위) */}
-              {campaign.start_date && campaign.end_date && (() => {
-                const startDate = new Date(campaign.start_date);
-                const endDate = new Date(campaign.end_date);
-                const todayKST = getTodayKST();
-                const datesWithData = new Set<string>();
-                
-                // 수집된 작업의 수집일자(completed_at) 추출
-                campaign.jobs.forEach(job => {
-                  if (job.completed_at) {
-                    const collectionDate = new Date(job.completed_at);
-                    const dateStr = formatDateOnly(collectionDate.toISOString());
-                    datesWithData.add(dateStr);
-                  }
-                });
-                
-                // 캠페인 기간 내 모든 날짜 생성
-                const allDates: string[] = [];
-                const currentDate = new Date(startDate);
-                while (currentDate <= endDate) {
-                  const dateStr = formatDateOnly(currentDate.toISOString());
-                  // 오늘 날짜(KST)보다 뒤의 날짜는 제외
-                  if (dateStr <= todayKST) {
-                    allDates.push(dateStr);
-                  }
-                  currentDate.setDate(currentDate.getDate() + 1);
-                }
-                
-                // 없는 날짜 찾기
-                const missingDates = allDates.filter(date => !datesWithData.has(date));
-                
-                if (missingDates.length > 0) {
-                  return (
-                    <div style={{ 
-                      marginTop: '1rem',
-                      marginBottom: '1rem',
-                      padding: '1rem',
-                      backgroundColor: '#fff3cd',
-                      border: '1px solid #ffc107',
-                      borderRadius: '4px',
-                      fontSize: '0.9rem',
-                      color: '#856404'
-                    }}>
-                      <strong>⚠️ 캠페인 기간 내 데이터 없음:</strong>
-                      <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                        {missingDates.map(date => (
-                          <span 
-                            key={date}
-                            style={{
-                              padding: '0.25rem 0.5rem',
-                              backgroundColor: '#fff',
-                              border: '1px solid #ffc107',
-                              borderRadius: '4px',
-                              fontSize: '0.85rem'
-                            }}
-                          >
-                            {date}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-              
-              <div style={{ 
-                marginTop: '1rem', 
-                marginBottom: '0.5rem',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center'
-              }}>
-                <div style={{ 
-                  fontSize: '0.9rem',
-                  fontWeight: '600',
-                  color: '#495057'
-                }}>
-                  수집 작업 목록 ({campaign.jobs.length}개)
-                </div>
-                <RefreshButton 
-                  onClick={fetchData} 
-                  disabled={loading}
-                  style={{ 
+              {/* 블로그 데이터 표시 */}
+              {campaign.is_blog ? (
+                <>
+                  <div style={{ 
+                    marginTop: '1rem', 
+                    marginBottom: '0.5rem',
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                    padding: '0.5rem 1rem',
-                    fontSize: '0.875rem'
-                  }}
-                >
-                  <RefreshCw size={16} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
-                  새로고침
-                </RefreshButton>
-              </div>
-              <JobsTable>
-                <thead>
-                  <tr>
-                    <TableHeader>릴스 URL</TableHeader>
-                    <TableHeader>상태</TableHeader>
-                    <TableHeader>계정명</TableHeader>
-                    <TableHeader>좋아요 수</TableHeader>
-                    <TableHeader>댓글 수</TableHeader>
-                    <TableHeader>재생수</TableHeader>
-                    <TableHeader>썸네일</TableHeader>
-                    <TableHeader>게시일자</TableHeader>
-                    <TableHeader>수집일자</TableHeader>
-                    <TableHeader>오류 메시지</TableHeader>
-                  </tr>
-                </thead>
-              <tbody>
-                {campaign.jobs.map(job => (
-                  <tr key={job.id}>
-                    <TableCell title={job.reel_url}>
-                      {formatUrl(job.reel_url)}
-                    </TableCell>
-                    <TableCell>
-                      <StatusBadge status={job.status}>
-                        {job.status === 'pending' && '대기중'}
-                        {job.status === 'processing' && '처리중'}
-                        {job.status === 'completed' && '완료'}
-                        {job.status === 'failed' && '실패'}
-                      </StatusBadge>
-                    </TableCell>
-                    <TableCell>
-                      {job.user_posted ? (
-                        <a 
-                          href={`https://www.instagram.com/${job.user_posted}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          style={{ 
-                            color: '#1d4ed8', 
-                            textDecoration: 'none',
-                            fontSize: '0.9rem'
-                          }}
-                        >
-                          https://www.instagram.com/{job.user_posted}
-                        </a>
-                      ) : '-'}
-                    </TableCell>
-                    <TableCell>
-                      {job.likes_count !== undefined && job.likes_count !== null 
-                        ? job.likes_count.toLocaleString() 
-                        : 'N/A'}
-                    </TableCell>
-                    <TableCell>
-                      {job.comments_count !== undefined && job.comments_count !== null 
-                        ? job.comments_count.toLocaleString() 
-                        : 'N/A'}
-                    </TableCell>
-                    <TableCell>
-                      {job.video_play_count ? job.video_play_count.toLocaleString() : '-'}
-                    </TableCell>
-                    <TableCell>
-                      {job.s3_thumbnail_url ? (
-                        <ThumbnailImage 
-                          src={job.s3_thumbnail_url} 
-                          alt="썸네일"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                            (e.target as HTMLImageElement).nextElementSibling?.setAttribute('style', 'display: flex');
-                          }}
-                        />
-                      ) : (
-                        <ThumbnailPlaceholder>
-                          이미지 없음
-                        </ThumbnailPlaceholder>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      {job.date_posted ? formatDateOnly(job.date_posted) : formatDateOnly(job.created_at)}
-                    </TableCell>
-                    <TableCell>
-                      {job.completed_at ? formatDateOnly(job.completed_at) : '-'}
-                    </TableCell>
-                    <TableCell>
-                      {job.error_message ? (
-                        <span style={{ color: '#721c24', fontSize: '0.8rem' }}>
-                          {job.error_message}
-                        </span>
-                      ) : '-'}
-                    </TableCell>
-                  </tr>
-                ))}
-              </tbody>
-            </JobsTable>
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <div style={{ 
+                      fontSize: '0.9rem',
+                      fontWeight: '600',
+                      color: '#495057'
+                    }}>
+                      블로그 수집 데이터 ({campaign.jobs.length}개)
+                    </div>
+                    <RefreshButton 
+                      onClick={fetchData} 
+                      disabled={loading}
+                      style={{ 
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 1rem',
+                        fontSize: '0.875rem'
+                      }}
+                    >
+                      <RefreshCw size={16} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
+                      새로고침
+                    </RefreshButton>
+                  </div>
+                  <JobsTable>
+                    <thead>
+                      <tr>
+                        <TableHeader>게시물 제목</TableHeader>
+                        <TableHeader>블로그 URL</TableHeader>
+                        <TableHeader>사용자명</TableHeader>
+                        <TableHeader>좋아요 수</TableHeader>
+                        <TableHeader>댓글 수</TableHeader>
+                        <TableHeader>일 방문자 수</TableHeader>
+                        <TableHeader>키워드</TableHeader>
+                        <TableHeader>랭킹</TableHeader>
+                        <TableHeader>게시일자</TableHeader>
+                        <TableHeader>수집일자</TableHeader>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {campaign.jobs.map(job => (
+                        <tr key={job.id}>
+                          <TableCell>
+                            {job.title || '수집 불가'}
+                          </TableCell>
+                          <TableCell title={job.blog_url}>
+                            {job.blog_url ? (
+                              <a 
+                                href={job.blog_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ 
+                                  color: '#1d4ed8', 
+                                  textDecoration: 'none',
+                                  fontSize: '0.9rem'
+                                }}
+                              >
+                                {formatUrl(job.blog_url)}
+                              </a>
+                            ) : '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.username || '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.likes_count !== undefined && job.likes_count !== null 
+                              ? job.likes_count.toLocaleString() 
+                              : '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.comments_count !== undefined && job.comments_count !== null 
+                              ? job.comments_count.toLocaleString() 
+                              : '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.daily_visitors !== undefined && job.daily_visitors !== null 
+                              ? job.daily_visitors.toLocaleString() 
+                              : '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.rankings && job.rankings.length > 0 ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                {job.rankings.map((ranking, idx) => (
+                                  <span key={idx} style={{ fontSize: '0.85rem' }}>
+                                    {ranking.keyword || '수집 불가'}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.rankings && job.rankings.length > 0 ? (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                                {job.rankings.map((ranking, idx) => (
+                                  <span key={idx} style={{ fontSize: '0.85rem' }}>
+                                    {ranking.ranking !== null && ranking.ranking !== undefined 
+                                      ? `${ranking.ranking}위` 
+                                      : '수집 불가'}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.posted_at ? formatDateOnly(job.posted_at) : '수집 불가'}
+                          </TableCell>
+                          <TableCell>
+                            {job.collection_date ? formatDateOnly(job.collection_date) : '수집 불가'}
+                          </TableCell>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </JobsTable>
+                </>
+              ) : (
+                <>
+                  {/* 캠페인 기간 내 없는 날짜 데이터 표시 (수집 작업 목록 위) */}
+                  {campaign.start_date && campaign.end_date && (() => {
+                    const startDate = new Date(campaign.start_date);
+                    const endDate = new Date(campaign.end_date);
+                    const todayKST = getTodayKST();
+                    const datesWithData = new Set<string>();
+                    
+                    // 수집된 작업의 수집일자(completed_at) 추출
+                    campaign.jobs.forEach(job => {
+                      if (job.completed_at) {
+                        const collectionDate = new Date(job.completed_at);
+                        const dateStr = formatDateOnly(collectionDate.toISOString());
+                        datesWithData.add(dateStr);
+                      }
+                    });
+                    
+                    // 캠페인 기간 내 모든 날짜 생성
+                    const allDates: string[] = [];
+                    const currentDate = new Date(startDate);
+                    while (currentDate <= endDate) {
+                      const dateStr = formatDateOnly(currentDate.toISOString());
+                      // 오늘 날짜(KST)보다 뒤의 날짜는 제외
+                      if (dateStr <= todayKST) {
+                        allDates.push(dateStr);
+                      }
+                      currentDate.setDate(currentDate.getDate() + 1);
+                    }
+                    
+                    // 없는 날짜 찾기
+                    const missingDates = allDates.filter(date => !datesWithData.has(date));
+                    
+                    if (missingDates.length > 0) {
+                      return (
+                        <div style={{ 
+                          marginTop: '1rem',
+                          marginBottom: '1rem',
+                          padding: '1rem',
+                          backgroundColor: '#fff3cd',
+                          border: '1px solid #ffc107',
+                          borderRadius: '4px',
+                          fontSize: '0.9rem',
+                          color: '#856404'
+                        }}>
+                          <strong>⚠️ 캠페인 기간 내 데이터 없음:</strong>
+                          <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                            {missingDates.map(date => (
+                              <span 
+                                key={date}
+                                style={{
+                                  padding: '0.25rem 0.5rem',
+                                  backgroundColor: '#fff',
+                                  border: '1px solid #ffc107',
+                                  borderRadius: '4px',
+                                  fontSize: '0.85rem'
+                                }}
+                              >
+                                {date}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+                  
+                  <div style={{ 
+                    marginTop: '1rem', 
+                    marginBottom: '0.5rem',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}>
+                    <div style={{ 
+                      fontSize: '0.9rem',
+                      fontWeight: '600',
+                      color: '#495057'
+                    }}>
+                      수집 작업 목록 ({campaign.jobs.length}개)
+                    </div>
+                    <RefreshButton 
+                      onClick={fetchData} 
+                      disabled={loading}
+                      style={{ 
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                        padding: '0.5rem 1rem',
+                        fontSize: '0.875rem'
+                      }}
+                    >
+                      <RefreshCw size={16} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
+                      새로고침
+                    </RefreshButton>
+                  </div>
+                  <JobsTable>
+                    <thead>
+                      <tr>
+                        <TableHeader>릴스 URL</TableHeader>
+                        <TableHeader>상태</TableHeader>
+                        <TableHeader>계정명</TableHeader>
+                        <TableHeader>좋아요 수</TableHeader>
+                        <TableHeader>댓글 수</TableHeader>
+                        <TableHeader>재생수</TableHeader>
+                        <TableHeader>썸네일</TableHeader>
+                        <TableHeader>게시일자</TableHeader>
+                        <TableHeader>수집일자</TableHeader>
+                        <TableHeader>오류 메시지</TableHeader>
+                      </tr>
+                    </thead>
+                  <tbody>
+                    {campaign.jobs.map(job => (
+                      <tr key={job.id}>
+                        <TableCell title={job.reel_url}>
+                          {formatUrl(job.reel_url || '')}
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge status={job.status || 'completed'}>
+                            {job.status === 'pending' && '대기중'}
+                            {job.status === 'processing' && '처리중'}
+                            {job.status === 'completed' && '완료'}
+                            {job.status === 'failed' && '실패'}
+                            {!job.status && '완료'}
+                          </StatusBadge>
+                        </TableCell>
+                        <TableCell>
+                          {job.user_posted ? (
+                            <a 
+                              href={`https://www.instagram.com/${job.user_posted}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{ 
+                                color: '#1d4ed8', 
+                                textDecoration: 'none',
+                                fontSize: '0.9rem'
+                              }}
+                            >
+                              https://www.instagram.com/{job.user_posted}
+                            </a>
+                          ) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {job.likes_count !== undefined && job.likes_count !== null 
+                            ? job.likes_count.toLocaleString() 
+                            : 'N/A'}
+                        </TableCell>
+                        <TableCell>
+                          {job.comments_count !== undefined && job.comments_count !== null 
+                            ? job.comments_count.toLocaleString() 
+                            : 'N/A'}
+                        </TableCell>
+                        <TableCell>
+                          {job.video_play_count ? job.video_play_count.toLocaleString() : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {job.s3_thumbnail_url ? (
+                            <ThumbnailImage 
+                              src={job.s3_thumbnail_url} 
+                              alt="썸네일"
+                              onError={(e) => {
+                                (e.target as HTMLImageElement).style.display = 'none';
+                                (e.target as HTMLImageElement).nextElementSibling?.setAttribute('style', 'display: flex');
+                              }}
+                            />
+                          ) : (
+                            <ThumbnailPlaceholder>
+                              이미지 없음
+                            </ThumbnailPlaceholder>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {job.date_posted ? formatDateOnly(job.date_posted) : (job.created_at ? formatDateOnly(job.created_at) : '-')}
+                        </TableCell>
+                        <TableCell>
+                          {job.completed_at ? formatDateOnly(job.completed_at) : '-'}
+                        </TableCell>
+                        <TableCell>
+                          {job.error_message ? (
+                            <span style={{ color: '#721c24', fontSize: '0.8rem' }}>
+                              {job.error_message}
+                            </span>
+                          ) : '-'}
+                        </TableCell>
+                      </tr>
+                    ))}
+                  </tbody>
+                </JobsTable>
+                </>
+              )}
             </>
           ) : (
             <div style={{ 

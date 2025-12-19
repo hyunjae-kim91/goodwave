@@ -69,6 +69,9 @@ export const adminApi = {
   
   getCampaignCollectionStatusById: (campaignId: number): Promise<any> =>
     api.get(`/admin/campaign-collection-status/${campaignId}`).then(res => res.data),
+
+  runScheduledCollection: (params?: { force_run_all?: boolean; run_hour?: number }): Promise<{ message: string; result: any }> =>
+    api.post('/admin/run-scheduled-collection', null, { params: params || {} }).then(res => res.data),
   
   processReelCollectionJobs: (): Promise<{ message: string; processed_count: number }> =>
     api.post('/admin/process-reel-collection-jobs').then(res => res.data),
@@ -139,6 +142,9 @@ export const adminApi = {
     api.put(`/admin/collection-schedules/campaign/${campaignId}/schedule-time`, null, {
       params: { schedule_hour: scheduleHour }
     }).then(res => res.data),
+  
+  testBlogCollection: (campaignId: number): Promise<{ message: string; campaign_id: number; campaign_name: string; schedules_tested: number; results: any[] }> =>
+    api.post(`/admin/test-blog-collection/${campaignId}`).then(res => res.data),
 };
 
 export default api;

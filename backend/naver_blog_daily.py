@@ -2,7 +2,8 @@
 
 import requests
 import json
-from typing import Optional
+from typing import Optional, Dict
+from xml.etree import ElementTree as ET
 
 
 def get_naver_blog_visitors(api_url: str) -> Optional[str]:
@@ -26,12 +27,39 @@ def get_naver_blog_visitors(api_url: str) -> Optional[str]:
         response = requests.get(api_url, headers=headers, timeout=10)
         response.raise_for_status()
         
-        # 응답이 유효한 JSON인지 확인
+        # 응답이 XML인지 JSON인지 확인
+        content_type = response.headers.get('content-type', '').lower()
+        
+        # XML 응답인 경우 (네이버 블로그 방문자 API는 XML 반환)
+        if 'xml' in content_type or response.text.strip().startswith('<?xml'):
+            try:
+                # XML을 파싱하여 JSON 형식으로 변환
+                root = ET.fromstring(response.text)
+                visitor_data = {}
+                
+                # visitorcnt 요소들을 찾아서 날짜별 방문자 수 추출
+                for visitorcnt in root.findall('.//visitorcnt'):
+                    date_id = visitorcnt.get('id')
+                    count = visitorcnt.get('cnt')
+                    if date_id and count:
+                        visitor_data[date_id] = count
+                
+                # JSON 문자열로 변환하여 반환
+                return json.dumps(visitor_data)
+            except ET.ParseError as e:
+                print(f"❌ XML parse error from {api_url}: {str(e)}")
+                print(f"   Response text (first 500 chars): {response.text[:500]}")
+                return None
+        
+        # JSON 응답인 경우
         try:
             json.loads(response.text)
             return response.text
         except json.JSONDecodeError:
-            print(f"Invalid JSON response from {api_url}")
+            print(f"❌ Invalid JSON response from {api_url}")
+            print(f"   Response status: {response.status_code}")
+            print(f"   Response headers: {dict(response.headers)}")
+            print(f"   Response text (first 500 chars): {response.text[:500]}")
             return None
             
     except requests.exceptions.RequestException as e:

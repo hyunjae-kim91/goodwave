@@ -56,12 +56,25 @@ class SchedulerService:
         if updated:
             self.db.flush()
 
-    async def run_scheduled_collection(self):
-        """정기 수집 실행 - 각 스케줄의 설정된 시간(시)에 맞는 것만 실행"""
+    async def run_scheduled_collection(self, *, force_run_all: bool = False, run_hour: Optional[int] = None) -> dict:
+        """정기 수집 실행 - 각 스케줄의 설정된 시간(시)에 맞는 것만 실행
+
+        Args:
+            force_run_all: True면 schedule_hour와 무관하게 모든 활성 스케줄을 처리
+            run_hour: 지정 시, '현재 시간' 대신 해당 hour(0-23)를 기준으로 스케줄 매칭
+        """
+        processed_count = 0
+        skipped_count = 0
+        errors: List[dict] = []
+
         try:
             current_time = now_kst()
-            current_hour = current_time.hour
-            print(f"Starting scheduled collection at {current_time} (KST) - checking for schedules at {current_hour:02d}:00")
+            current_hour = run_hour if run_hour is not None else current_time.hour
+            print(
+                f"Starting scheduled collection at {current_time} (KST) - "
+                f"checking for schedules at {current_hour:02d}:00 "
+                f"(force_run_all={force_run_all})"
+            )
             
             # 활성 스케줄 조회 (오늘 날짜가 수집 기간 내에 있는 것만) - 한국 시간 기준
             today = current_time.date()
@@ -74,16 +87,13 @@ class SchedulerService:
             print(f"Found {len(active_schedules)} active schedules")
             
             # 각 스케줄의 설정된 시간(시)과 현재 시간(시)이 일치하는 것만 처리
-            processed_count = 0
-            skipped_count = 0
-            
             for schedule in active_schedules:
                 try:
                     # 스케줄 시간 확인 (기본값 9시)
                     schedule_hour = schedule.schedule_hour if hasattr(schedule, 'schedule_hour') and schedule.schedule_hour is not None else 9
                     
                     # 현재 시간(시)이 스케줄 시간(시)과 일치하는지 확인
-                    if current_hour == schedule_hour:
+                    if force_run_all or (current_hour == schedule_hour):
                         print(f"✅ Schedule {schedule.id} matches current hour ({schedule_hour:02d}:00) - processing")
                         await self._process_schedule(schedule)
                         # 각 스케줄 처리 후 즉시 커밋하여 다음 스케줄의 중복 체크가 정확히 작동하도록 함
@@ -97,12 +107,29 @@ class SchedulerService:
                     import traceback
                     traceback.print_exc()
                     self.db.rollback()
+                    errors.append({"schedule_id": getattr(schedule, "id", None), "error": str(e)})
                     continue
             
             print(f"Scheduled collection completed: {processed_count} processed, {skipped_count} skipped at {now_kst()} (KST)")
+            return {
+                "processed_count": processed_count,
+                "skipped_count": skipped_count,
+                "total_active_schedules": len(active_schedules),
+                "run_hour_kst": current_hour,
+                "force_run_all": force_run_all,
+                "errors": errors,
+            }
             
         except Exception as e:
             print(f"Error in scheduled collection: {str(e)}")
+            return {
+                "processed_count": processed_count,
+                "skipped_count": skipped_count,
+                "total_active_schedules": None,
+                "run_hour_kst": run_hour,
+                "force_run_all": force_run_all,
+                "errors": errors + [{"schedule_id": None, "error": str(e)}],
+            }
         finally:
             self.db.close()
 
@@ -352,17 +379,27 @@ class SchedulerService:
     ):
         """캠페인 블로그 수집"""
         try:
+            print(f"📊 Collecting blog data for campaign {campaign.name} (ID: {campaign.id})")
+            print(f"   URL: {schedule.campaign_url}")
+            
             blog_data = await blog_service.collect_blog_data(schedule.campaign_url)
             if not blog_data:
-                print(f"No blog data collected for {schedule.campaign_url}")
+                print(f"❌ No blog data collected for {schedule.campaign_url}")
                 return
+            
+            print(f"✅ Blog data received: {blog_data.get('title')} (likes: {blog_data.get('likes_count')}, comments: {blog_data.get('comments_count')})")
 
             keywords = await self._generate_campaign_keywords(campaign.id, blog_data.get('title'))
+            print(f"🔍 Checking rankings for {len(keywords)} keywords: {keywords}")
             rankings = []
             for keyword in keywords:
+                print(f"   Checking ranking for keyword: '{keyword}'")
                 ranking = await blog_service._check_blog_ranking(schedule.campaign_url, keyword)
                 if ranking:
+                    print(f"   ✅ Found ranking: {ranking} for keyword '{keyword}'")
                     rankings.append({'keyword': keyword, 'ranking': ranking})
+                else:
+                    print(f"   ⚠️ No ranking found for keyword '{keyword}' (may be outside top 100 or API issue)")
 
             # 기존 데이터 정리 후 저장 (연관 랭킹 포함)
             existing_blogs = self.db.query(models.CampaignBlog).filter(
@@ -416,10 +453,19 @@ class SchedulerService:
 
             # 커밋은 상위 메서드에서 처리하므로 여기서는 flush만 수행
             self.db.flush()
-            print(f"Collected blog data for campaign {campaign.name}")
+            print(f"✅ Successfully saved blog data to database:")
+            print(f"   - Title: {base_entry.title}")
+            print(f"   - Username: {base_entry.username}")
+            print(f"   - Likes: {base_entry.likes_count}")
+            print(f"   - Comments: {base_entry.comments_count}")
+            print(f"   - Daily Visitors: {base_entry.daily_visitors}")
+            print(f"   - Rankings: {len(ranking_records)} keywords")
+            print(f"✅ Collected blog data for campaign {campaign.name}")
             
         except Exception as e:
-            print(f"Error collecting campaign blogs: {str(e)}")
+            import traceback
+            print(f"❌ Error collecting campaign blogs: {str(e)}")
+            traceback.print_exc()
             self.db.rollback()
 
     def _calculate_influencer_average_views(self, username: str) -> Optional[float]:
@@ -533,4 +579,20 @@ class SchedulerService:
                     counter[token] += 1
         return [kw for kw, _ in counter.most_common(limit)]
 
-scheduler_service = SchedulerService()
+# Lazy initialization to avoid DB connection during module import
+_scheduler_service_instance: Optional[SchedulerService] = None
+
+def get_scheduler_service() -> SchedulerService:
+    """Get or create SchedulerService instance (lazy initialization)"""
+    global _scheduler_service_instance
+    if _scheduler_service_instance is None:
+        _scheduler_service_instance = SchedulerService()
+    return _scheduler_service_instance
+
+# For backward compatibility, create a property-like accessor
+class _SchedulerServiceProxy:
+    """Proxy class to maintain backward compatibility"""
+    def __getattr__(self, name):
+        return getattr(get_scheduler_service(), name)
+
+scheduler_service = _SchedulerServiceProxy()

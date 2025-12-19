@@ -52,6 +52,11 @@ function HashRedirect() {
 }
 
 function App() {
+  // 타이틀 설정
+  useEffect(() => {
+    document.title = 'Fitfluence Report';
+  }, []);
+
   // 초기 로드 시 # 제거 (렌더링 전에 처리)
   const hash = window.location.hash;
   if (hash && hash.startsWith('#/')) {

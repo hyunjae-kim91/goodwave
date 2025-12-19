@@ -45,14 +45,55 @@ def start_ssh_tunnel() -> Optional[SSHTunnelForwarder]:
         logger.info(f"Starting SSH tunnel: {settings.ssh_user}@{settings.ssh_host}:{settings.ssh_port}")
         logger.info(f"Tunneling to RDS: {settings.rds_host}:{settings.rds_port} -> localhost:{settings.local_tunnel_port}")
         
+        # Windows 경로 처리: ~ 확장 및 경로 정규화
+        import os
+        from pathlib import Path
+        import paramiko
+        
+        ssh_key_path = settings.ssh_pem_key_path
+        if ssh_key_path:
+            # ~ 확장
+            ssh_key_path = os.path.expanduser(ssh_key_path)
+            # 절대 경로로 변환
+            ssh_key_path = str(Path(ssh_key_path).resolve())
+            logger.info(f"Using SSH key: {ssh_key_path}")
+            
+            # SSH 키 파일 존재 확인
+            if not os.path.exists(ssh_key_path):
+                logger.error(f"SSH key file not found: {ssh_key_path}")
+                return None
+            
+            # paramiko를 사용하여 키를 직접 로드 (DSSKey 호환성 문제 해결)
+            try:
+                # RSA 키 시도
+                try:
+                    ssh_pkey = paramiko.RSAKey.from_private_key_file(ssh_key_path)
+                except:
+                    # ED25519 키 시도
+                    try:
+                        ssh_pkey = paramiko.Ed25519Key.from_private_key_file(ssh_key_path)
+                    except:
+                        # ECDSA 키 시도
+                        try:
+                            ssh_pkey = paramiko.ECDSAKey.from_private_key_file(ssh_key_path)
+                        except:
+                            # 기본적으로 파일 경로 사용
+                            ssh_pkey = ssh_key_path
+                            logger.warning("Could not load SSH key with paramiko, using file path directly")
+            except Exception as e:
+                logger.warning(f"Error loading SSH key with paramiko: {e}, using file path directly")
+                ssh_pkey = ssh_key_path
+        else:
+            ssh_pkey = None
+        
+        # sshtunnel 0.4.0에서는 look_for_keys와 allow_agent 인자가 지원되지 않음
+        # paramiko 3.0+ 호환성을 위해 키를 직접 로드하여 전달
         _ssh_tunnel = SSHTunnelForwarder(
             (settings.ssh_host, settings.ssh_port),
             ssh_username=settings.ssh_user,
-            ssh_pkey=settings.ssh_pem_key_path,
+            ssh_pkey=ssh_pkey,
             remote_bind_address=(settings.rds_host, settings.rds_port),
             local_bind_address=('127.0.0.1', settings.local_tunnel_port),
-            allow_agent=False,
-            look_for_keys=False,
         )
         
         _ssh_tunnel.start()

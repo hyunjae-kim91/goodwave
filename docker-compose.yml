@@ -28,6 +28,8 @@ services:
       - NAVER_SECRET_KEY=${NAVER_SECRET_KEY}
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_VISION_MODEL=${OPENAI_VISION_MODEL}
+      - USE_SSH_TUNNEL=false  # Docker 환경에서는 SSH 터널 비활성화
+      - DOCKER_CONTAINER=true  # Docker 환경임을 명시
     ports:
       - "8000:8000"
     volumes:

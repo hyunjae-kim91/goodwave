@@ -170,6 +170,8 @@ const TableCell = styled.td`
   &.ranking-cell {
     text-align: center;
     font-size: 0.9rem;
+    white-space: pre-line; /* 줄바꿈 표시 */
+    line-height: 1.6;
     
     &.has-ranking {
       background-color: #d4edda;

@@ -1,5 +1,24 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
+import os
+from pathlib import Path
+
+def _is_docker_environment() -> bool:
+    """Docker 환경인지 확인"""
+    # Docker 컨테이너 내부에는 .dockerenv 파일이 존재
+    if Path("/.dockerenv").exists():
+        return True
+    # 또는 환경 변수로 확인
+    if os.environ.get("DOCKER_CONTAINER") == "true":
+        return True
+    # cgroup을 통한 확인 (Linux)
+    try:
+        with open("/proc/self/cgroup", "r") as f:
+            if "docker" in f.read():
+                return True
+    except (FileNotFoundError, IOError):
+        pass
+    return False
 
 class Settings(BaseSettings):
     # Database
@@ -38,6 +57,7 @@ class Settings(BaseSettings):
     storage_provider: str = "s3"  # local or s3
     
     # SSH Tunnel (for local development to access RDS via EC2 bastion)
+    # Docker 환경에서는 자동으로 False로 설정됨
     use_ssh_tunnel: bool = False
     ssh_host: Optional[str] = None
     ssh_user: Optional[str] = None
@@ -46,6 +66,13 @@ class Settings(BaseSettings):
     rds_host: Optional[str] = None
     rds_port: int = 5432
     local_tunnel_port: int = 5433
+    
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # Docker 환경에서는 SSH 터널을 자동으로 비활성화
+        # 단, 환경 변수로 명시적으로 USE_SSH_TUNNEL=true로 설정된 경우는 예외
+        if _is_docker_environment() and "USE_SSH_TUNNEL" not in os.environ:
+            self.use_ssh_tunnel = False
     
     class Config:
         env_file = ".env"
