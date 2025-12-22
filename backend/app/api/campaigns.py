@@ -211,12 +211,16 @@ async def create_campaign(campaign_data: CampaignCreate, db: Session = Depends(g
         )
         db.add(db_url)
 
+        # 블로그 채널의 경우 기본 스케줄 시간을 23시로 설정
+        schedule_hour = 23 if url_data.channel == 'blog' else None  # None이면 모델의 기본값(1시) 사용
+        
         db_schedule = models.CollectionSchedule(
             campaign_id=db_campaign.id,
             channel=url_data.channel,
             campaign_url=url_data.url,
             start_date=campaign_data.start_date,
             end_date=campaign_data.end_date,
+            schedule_hour=schedule_hour if schedule_hour is not None else 1,  # 블로그는 23시, 그 외는 1시
         )
         db.add(db_schedule)
         db.flush()
