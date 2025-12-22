@@ -401,15 +401,72 @@ class SchedulerService:
                 else:
                     print(f"   ⚠️ No ranking found for keyword '{keyword}' (may be outside top 100 or API issue)")
 
-            # 기존 데이터 정리 후 저장 (연관 랭킹 포함)
-            existing_blogs = self.db.query(models.CampaignBlog).filter(
+            # 같은 날짜에 같은 URL의 데이터가 이미 있는지 확인 (중복 방지)
+            # collection_date를 날짜만 비교하기 위해 날짜 범위로 필터링
+            collection_date_start = datetime.combine(collection_date.date(), time.min)
+            collection_date_end = datetime.combine(collection_date.date() + timedelta(days=1), time.min)
+            
+            existing_today = self.db.query(models.CampaignBlog).filter(
                 models.CampaignBlog.campaign_id == campaign.id,
                 models.CampaignBlog.campaign_url == schedule.campaign_url,
-            ).all()
-            for blog_entry in existing_blogs:
-                self.db.delete(blog_entry)
-            self.db.flush()
+                models.CampaignBlog.collection_date >= collection_date_start,
+                models.CampaignBlog.collection_date < collection_date_end
+            ).first()
+            
+            if existing_today:
+                # 같은 날짜에 같은 URL의 데이터가 있으면 업데이트
+                print(f"⚠️ 같은 날짜({collection_date.date()})에 이미 수집된 데이터가 있습니다. 업데이트합니다.")
+                # 기존 랭킹 데이터 삭제 (새로운 랭킹 데이터로 교체)
+                for ranking in existing_today.rankings:
+                    self.db.delete(ranking)
+                
+                # 데이터 업데이트
+                existing_today.username = blog_data.get('username')
+                existing_today.title = blog_data.get('title')
+                existing_today.likes_count = blog_data.get('likes_count', 0)
+                existing_today.comments_count = blog_data.get('comments_count', 0)
+                existing_today.daily_visitors = blog_data.get('daily_visitors', 0)
+                existing_today.posted_at = blog_data.get('posted_at')
+                
+                # 새로운 랭킹 데이터 추가
+                ranking_records: List[models.CampaignBlogRanking] = []
+                ranking_keywords = set()
+                for ranking_info in rankings:
+                    keyword = ranking_info['keyword']
+                    if not keyword:
+                        continue
+                    ranking_keywords.add(keyword)
+                    ranking_records.append(
+                        models.CampaignBlogRanking(
+                            keyword=keyword,
+                            ranking=ranking_info.get('ranking')
+                        )
+                    )
 
+                for keyword in keywords:
+                    if keyword and keyword not in ranking_keywords:
+                        ranking_records.append(
+                            models.CampaignBlogRanking(
+                                keyword=keyword,
+                                ranking=None
+                            )
+                        )
+
+                if ranking_records:
+                    existing_today.rankings.extend(ranking_records)
+                
+                self.db.flush()
+                print(f"✅ Successfully updated blog data in database:")
+                print(f"   - Title: {existing_today.title}")
+                print(f"   - Username: {existing_today.username}")
+                print(f"   - Likes: {existing_today.likes_count}")
+                print(f"   - Comments: {existing_today.comments_count}")
+                print(f"   - Daily Visitors: {existing_today.daily_visitors}")
+                print(f"   - Rankings: {len(ranking_records)} keywords")
+                print(f"✅ Updated blog data for campaign {campaign.name}")
+                return
+
+            # 새로운 데이터 추가 (다른 날짜이거나 같은 날짜에 데이터가 없는 경우)
             base_entry = models.CampaignBlog(
                 campaign_id=campaign.id,
                 campaign_url=schedule.campaign_url,

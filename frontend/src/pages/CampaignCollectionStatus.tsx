@@ -379,7 +379,7 @@ const CampaignCollectionStatus: React.FC = () => {
     
     // 캠페인별 필터링
     if (selectedCampaign) {
-      const campaignId = parseInt(selectedCampaign);
+    const campaignId = parseInt(selectedCampaign);
       filtered.campaigns = filtered.campaigns.filter(c => c.campaign_id === campaignId);
     } else {
       // 캠페인이 선택되지 않은 경우 빈 결과 반환
@@ -395,8 +395,8 @@ const CampaignCollectionStatus: React.FC = () => {
         } else {
           // 릴스는 상태별 필터링
           return {
-            ...campaign,
-            jobs: campaign.jobs.filter(job => job.status === selectedStatus)
+        ...campaign,
+        jobs: campaign.jobs.filter(job => job.status === selectedStatus)
           };
         }
       }).filter(campaign => campaign.jobs.length > 0);
@@ -738,7 +738,7 @@ const CampaignCollectionStatus: React.FC = () => {
               const dataType = isBlog ? '블로그' : '릴스';
               return todayDataInfo.has_today_data 
                 ? `✅ 오늘(${todayDataInfo.today_date}) ${todayDataInfo.today_count}개의 ${dataType} 데이터가 이미 수집되어 있습니다.`
-                : `ℹ️ 오늘(${todayDataInfo.today_date}) 수집된 데이터가 없습니다. 즉시 수집 버튼을 클릭하여 수집을 시작하세요.`
+              : `ℹ️ 오늘(${todayDataInfo.today_date}) 수집된 데이터가 없습니다. 즉시 수집 버튼을 클릭하여 수집을 시작하세요.`
             })()}
           </div>
         )}
@@ -775,10 +775,10 @@ const CampaignCollectionStatus: React.FC = () => {
                   return true;
                 })
                 .map(campaign => (
-                  <option key={campaign.campaign_id} value={campaign.campaign_id.toString()}>
-                    {campaign.campaign_name || `캠페인 ${campaign.campaign_id}`}
-                  </option>
-                ))}
+                <option key={campaign.campaign_id} value={campaign.campaign_id.toString()}>
+                  {campaign.campaign_name || `캠페인 ${campaign.campaign_id}`}
+                </option>
+              ))}
             </FilterSelect>
           </FilterGroup>
           
@@ -1070,7 +1070,6 @@ const CampaignCollectionStatus: React.FC = () => {
                         <TableHeader>좋아요 수</TableHeader>
                         <TableHeader>댓글 수</TableHeader>
                         <TableHeader>일 방문자 수</TableHeader>
-                        <TableHeader>키워드</TableHeader>
                         <TableHeader>랭킹</TableHeader>
                         <TableHeader>게시일자</TableHeader>
                         <TableHeader>수집일자</TableHeader>
@@ -1119,26 +1118,15 @@ const CampaignCollectionStatus: React.FC = () => {
                           <TableCell>
                             {job.rankings && job.rankings.length > 0 ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                {job.rankings.map((ranking, idx) => (
-                                  <span key={idx} style={{ fontSize: '0.85rem' }}>
-                                    {ranking.keyword || '수집 불가'}
-                                  </span>
-                                ))}
+                                {job.rankings
+                                  .filter(ranking => ranking.ranking !== null && ranking.ranking !== undefined)
+                                  .map((ranking, idx) => (
+                                    <span key={idx} style={{ fontSize: '0.85rem' }}>
+                                      {ranking.keyword ? `${ranking.keyword} ${ranking.ranking}위` : `${ranking.ranking}위`}
+                                    </span>
+                                  ))}
                               </div>
-                            ) : '수집 불가'}
-                          </TableCell>
-                          <TableCell>
-                            {job.rankings && job.rankings.length > 0 ? (
-                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                                {job.rankings.map((ranking, idx) => (
-                                  <span key={idx} style={{ fontSize: '0.85rem' }}>
-                                    {ranking.ranking !== null && ranking.ranking !== undefined 
-                                      ? `${ranking.ranking}위` 
-                                      : '수집 불가'}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : '수집 불가'}
+                            ) : ''}
                           </TableCell>
                           <TableCell>
                             {job.posted_at ? formatDateOnly(job.posted_at) : '수집 불가'}
@@ -1152,194 +1140,194 @@ const CampaignCollectionStatus: React.FC = () => {
                   </JobsTable>
                 </>
               ) : (
-                <>
-                  {/* 캠페인 기간 내 없는 날짜 데이터 표시 (수집 작업 목록 위) */}
-                  {campaign.start_date && campaign.end_date && (() => {
-                    const startDate = new Date(campaign.start_date);
-                    const endDate = new Date(campaign.end_date);
-                    const todayKST = getTodayKST();
-                    const datesWithData = new Set<string>();
-                    
-                    // 수집된 작업의 수집일자(completed_at) 추출
-                    campaign.jobs.forEach(job => {
-                      if (job.completed_at) {
-                        const collectionDate = new Date(job.completed_at);
-                        const dateStr = formatDateOnly(collectionDate.toISOString());
-                        datesWithData.add(dateStr);
-                      }
-                    });
-                    
-                    // 캠페인 기간 내 모든 날짜 생성
-                    const allDates: string[] = [];
-                    const currentDate = new Date(startDate);
-                    while (currentDate <= endDate) {
-                      const dateStr = formatDateOnly(currentDate.toISOString());
-                      // 오늘 날짜(KST)보다 뒤의 날짜는 제외
-                      if (dateStr <= todayKST) {
-                        allDates.push(dateStr);
-                      }
-                      currentDate.setDate(currentDate.getDate() + 1);
-                    }
-                    
-                    // 없는 날짜 찾기
-                    const missingDates = allDates.filter(date => !datesWithData.has(date));
-                    
-                    if (missingDates.length > 0) {
-                      return (
-                        <div style={{ 
-                          marginTop: '1rem',
-                          marginBottom: '1rem',
-                          padding: '1rem',
-                          backgroundColor: '#fff3cd',
-                          border: '1px solid #ffc107',
-                          borderRadius: '4px',
-                          fontSize: '0.9rem',
-                          color: '#856404'
-                        }}>
-                          <strong>⚠️ 캠페인 기간 내 데이터 없음:</strong>
-                          <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                            {missingDates.map(date => (
-                              <span 
-                                key={date}
-                                style={{
-                                  padding: '0.25rem 0.5rem',
-                                  backgroundColor: '#fff',
-                                  border: '1px solid #ffc107',
-                                  borderRadius: '4px',
-                                  fontSize: '0.85rem'
-                                }}
-                              >
-                                {date}
-                              </span>
-                            ))}
-                          </div>
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-                  
-                  <div style={{ 
-                    marginTop: '1rem', 
-                    marginBottom: '0.5rem',
-                    display: 'flex',
-                    justifyContent: 'space-between',
-                    alignItems: 'center'
-                  }}>
+            <>
+              {/* 캠페인 기간 내 없는 날짜 데이터 표시 (수집 작업 목록 위) */}
+              {campaign.start_date && campaign.end_date && (() => {
+                const startDate = new Date(campaign.start_date);
+                const endDate = new Date(campaign.end_date);
+                const todayKST = getTodayKST();
+                const datesWithData = new Set<string>();
+                
+                // 수집된 작업의 수집일자(completed_at) 추출
+                campaign.jobs.forEach(job => {
+                  if (job.completed_at) {
+                    const collectionDate = new Date(job.completed_at);
+                    const dateStr = formatDateOnly(collectionDate.toISOString());
+                    datesWithData.add(dateStr);
+                  }
+                });
+                
+                // 캠페인 기간 내 모든 날짜 생성
+                const allDates: string[] = [];
+                const currentDate = new Date(startDate);
+                while (currentDate <= endDate) {
+                  const dateStr = formatDateOnly(currentDate.toISOString());
+                  // 오늘 날짜(KST)보다 뒤의 날짜는 제외
+                  if (dateStr <= todayKST) {
+                    allDates.push(dateStr);
+                  }
+                  currentDate.setDate(currentDate.getDate() + 1);
+                }
+                
+                // 없는 날짜 찾기
+                const missingDates = allDates.filter(date => !datesWithData.has(date));
+                
+                if (missingDates.length > 0) {
+                  return (
                     <div style={{ 
+                      marginTop: '1rem',
+                      marginBottom: '1rem',
+                      padding: '1rem',
+                      backgroundColor: '#fff3cd',
+                      border: '1px solid #ffc107',
+                      borderRadius: '4px',
                       fontSize: '0.9rem',
-                      fontWeight: '600',
-                      color: '#495057'
+                      color: '#856404'
                     }}>
-                      수집 작업 목록 ({campaign.jobs.length}개)
+                      <strong>⚠️ 캠페인 기간 내 데이터 없음:</strong>
+                      <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        {missingDates.map(date => (
+                          <span 
+                            key={date}
+                            style={{
+                              padding: '0.25rem 0.5rem',
+                              backgroundColor: '#fff',
+                              border: '1px solid #ffc107',
+                              borderRadius: '4px',
+                              fontSize: '0.85rem'
+                            }}
+                          >
+                            {date}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                    <RefreshButton 
-                      onClick={fetchData} 
-                      disabled={loading}
-                      style={{ 
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '0.5rem',
-                        padding: '0.5rem 1rem',
-                        fontSize: '0.875rem'
-                      }}
-                    >
-                      <RefreshCw size={16} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
-                      새로고침
-                    </RefreshButton>
-                  </div>
-                  <JobsTable>
-                    <thead>
-                      <tr>
-                        <TableHeader>릴스 URL</TableHeader>
-                        <TableHeader>상태</TableHeader>
-                        <TableHeader>계정명</TableHeader>
-                        <TableHeader>좋아요 수</TableHeader>
-                        <TableHeader>댓글 수</TableHeader>
-                        <TableHeader>재생수</TableHeader>
-                        <TableHeader>썸네일</TableHeader>
-                        <TableHeader>게시일자</TableHeader>
-                        <TableHeader>수집일자</TableHeader>
-                        <TableHeader>오류 메시지</TableHeader>
-                      </tr>
-                    </thead>
-                  <tbody>
-                    {campaign.jobs.map(job => (
-                      <tr key={job.id}>
-                        <TableCell title={job.reel_url}>
+                  );
+                }
+                return null;
+              })()}
+              
+              <div style={{ 
+                marginTop: '1rem', 
+                marginBottom: '0.5rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <div style={{ 
+                  fontSize: '0.9rem',
+                  fontWeight: '600',
+                  color: '#495057'
+                }}>
+                  수집 작업 목록 ({campaign.jobs.length}개)
+                </div>
+                <RefreshButton 
+                  onClick={fetchData} 
+                  disabled={loading}
+                  style={{ 
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 1rem',
+                    fontSize: '0.875rem'
+                  }}
+                >
+                  <RefreshCw size={16} style={loading ? { animation: 'spin 1s linear infinite' } : undefined} />
+                  새로고침
+                </RefreshButton>
+              </div>
+              <JobsTable>
+                <thead>
+                  <tr>
+                    <TableHeader>릴스 URL</TableHeader>
+                    <TableHeader>상태</TableHeader>
+                    <TableHeader>계정명</TableHeader>
+                    <TableHeader>좋아요 수</TableHeader>
+                    <TableHeader>댓글 수</TableHeader>
+                    <TableHeader>재생수</TableHeader>
+                    <TableHeader>썸네일</TableHeader>
+                    <TableHeader>게시일자</TableHeader>
+                    <TableHeader>수집일자</TableHeader>
+                    <TableHeader>오류 메시지</TableHeader>
+                  </tr>
+                </thead>
+              <tbody>
+                {campaign.jobs.map(job => (
+                  <tr key={job.id}>
+                    <TableCell title={job.reel_url}>
                           {formatUrl(job.reel_url || '')}
-                        </TableCell>
-                        <TableCell>
+                    </TableCell>
+                    <TableCell>
                           <StatusBadge status={job.status || 'completed'}>
-                            {job.status === 'pending' && '대기중'}
-                            {job.status === 'processing' && '처리중'}
-                            {job.status === 'completed' && '완료'}
-                            {job.status === 'failed' && '실패'}
+                        {job.status === 'pending' && '대기중'}
+                        {job.status === 'processing' && '처리중'}
+                        {job.status === 'completed' && '완료'}
+                        {job.status === 'failed' && '실패'}
                             {!job.status && '완료'}
-                          </StatusBadge>
-                        </TableCell>
-                        <TableCell>
-                          {job.user_posted ? (
-                            <a 
-                              href={`https://www.instagram.com/${job.user_posted}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              style={{ 
-                                color: '#1d4ed8', 
-                                textDecoration: 'none',
-                                fontSize: '0.9rem'
-                              }}
-                            >
-                              https://www.instagram.com/{job.user_posted}
-                            </a>
-                          ) : '-'}
-                        </TableCell>
-                        <TableCell>
-                          {job.likes_count !== undefined && job.likes_count !== null 
-                            ? job.likes_count.toLocaleString() 
-                            : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          {job.comments_count !== undefined && job.comments_count !== null 
-                            ? job.comments_count.toLocaleString() 
-                            : 'N/A'}
-                        </TableCell>
-                        <TableCell>
-                          {job.video_play_count ? job.video_play_count.toLocaleString() : '-'}
-                        </TableCell>
-                        <TableCell>
-                          {job.s3_thumbnail_url ? (
-                            <ThumbnailImage 
-                              src={job.s3_thumbnail_url} 
-                              alt="썸네일"
-                              onError={(e) => {
-                                (e.target as HTMLImageElement).style.display = 'none';
-                                (e.target as HTMLImageElement).nextElementSibling?.setAttribute('style', 'display: flex');
-                              }}
-                            />
-                          ) : (
-                            <ThumbnailPlaceholder>
-                              이미지 없음
-                            </ThumbnailPlaceholder>
-                          )}
-                        </TableCell>
-                        <TableCell>
+                      </StatusBadge>
+                    </TableCell>
+                    <TableCell>
+                      {job.user_posted ? (
+                        <a 
+                          href={`https://www.instagram.com/${job.user_posted}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          style={{ 
+                            color: '#1d4ed8', 
+                            textDecoration: 'none',
+                            fontSize: '0.9rem'
+                          }}
+                        >
+                          https://www.instagram.com/{job.user_posted}
+                        </a>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {job.likes_count !== undefined && job.likes_count !== null 
+                        ? job.likes_count.toLocaleString() 
+                        : 'N/A'}
+                    </TableCell>
+                    <TableCell>
+                      {job.comments_count !== undefined && job.comments_count !== null 
+                        ? job.comments_count.toLocaleString() 
+                        : 'N/A'}
+                    </TableCell>
+                    <TableCell>
+                      {job.video_play_count ? job.video_play_count.toLocaleString() : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {job.s3_thumbnail_url ? (
+                        <ThumbnailImage 
+                          src={job.s3_thumbnail_url} 
+                          alt="썸네일"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                            (e.target as HTMLImageElement).nextElementSibling?.setAttribute('style', 'display: flex');
+                          }}
+                        />
+                      ) : (
+                        <ThumbnailPlaceholder>
+                          이미지 없음
+                        </ThumbnailPlaceholder>
+                      )}
+                    </TableCell>
+                    <TableCell>
                           {job.date_posted ? formatDateOnly(job.date_posted) : (job.created_at ? formatDateOnly(job.created_at) : '-')}
-                        </TableCell>
-                        <TableCell>
-                          {job.completed_at ? formatDateOnly(job.completed_at) : '-'}
-                        </TableCell>
-                        <TableCell>
-                          {job.error_message ? (
-                            <span style={{ color: '#721c24', fontSize: '0.8rem' }}>
-                              {job.error_message}
-                            </span>
-                          ) : '-'}
-                        </TableCell>
-                      </tr>
-                    ))}
-                  </tbody>
-                </JobsTable>
+                    </TableCell>
+                    <TableCell>
+                      {job.completed_at ? formatDateOnly(job.completed_at) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {job.error_message ? (
+                        <span style={{ color: '#721c24', fontSize: '0.8rem' }}>
+                          {job.error_message}
+                        </span>
+                      ) : '-'}
+                    </TableCell>
+                  </tr>
+                ))}
+              </tbody>
+            </JobsTable>
                 </>
               )}
             </>

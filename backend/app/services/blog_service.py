@@ -436,17 +436,27 @@ class BlogService:
             return None
 
     def _parse_blog_date(self, date_string: str) -> Optional[datetime]:
-        """블로그 날짜 문자열을 datetime 객체로 변환"""
+        """블로그 날짜 문자열을 datetime 객체로 변환
+        
+        yyyy-mm-dd 형식의 문자열을 받아서 datetime 객체로 변환합니다.
+        이미 yyyy-mm-dd 형식으로 변환된 날짜를 처리합니다.
+        """
         if not date_string:
             return None
             
         try:
+            # yyyy-mm-dd 형식인 경우 직접 파싱
+            if re.match(r'^\d{4}-\d{2}-\d{2}$', date_string.strip()):
+                return datetime.strptime(date_string.strip(), '%Y-%m-%d')
+            
             # 여러 날짜 형식 시도
             date_formats = [
                 '%Y.%m.%d',
                 '%Y-%m-%d',
                 '%Y.%m.%d.',
-                '%Y년 %m월 %d일'
+                '%Y년 %m월 %d일',
+                '%Y. %m. %d.',  # "2025. 12. 9." 형식
+                '%Y. %m. %d'    # "2025. 12. 9" 형식
             ]
             
             for fmt in date_formats:

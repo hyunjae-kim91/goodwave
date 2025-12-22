@@ -122,12 +122,34 @@ def get_blog_info(blog_url: str) -> Optional[Dict[str, Any]]:
                     title_text = title_text.split(':', 1)[1].strip()
                 blog_info['title'] = title_text
 
-        # posted_at(게시일) 추출 (예: <span class="se_publishDate pcol2">2025. 12. 8. 12:40</span>)
-        publish_elem = soup.select_one('span.se_publishDate') or soup.select_one('.se_publishDate')
+        # posted_at(게시일) 추출 (예: <span class="se_publishDate pcol2">2025. 12. 9. 1:41</span>)
+        # se_publishDate pcol2 클래스를 가진 요소에서 날짜 추출
+        publish_elem = soup.select_one('span.se_publishDate.pcol2') or soup.select_one('span.se_publishDate') or soup.select_one('.se_publishDate')
         if publish_elem:
             date_text = publish_elem.get_text(strip=True)
             if date_text:
-                blog_info['post_date'] = date_text
+                # 시간 제거하고 날짜만 추출 (예: "2025. 12. 9. 1:41" -> "2025. 12. 9")
+                # 날짜 형식: "YYYY. MM. DD. HH:MM" 또는 "YYYY. MM. DD"
+                # 시간 부분 제거 (공백, 점, 콜론으로 구분된 시간 패턴)
+                date_only = re.sub(r'\s+\d{1,2}:\d{2}.*$', '', date_text).strip()
+                # 마지막 점 제거 (예: "2025. 12. 9." -> "2025. 12. 9")
+                date_only = date_only.rstrip('.')
+                # yyyy-mm-dd 형식으로 변환
+                try:
+                    # "2025. 12. 9" 형식을 파싱
+                    parts = [p.strip() for p in date_only.split('.')]
+                    if len(parts) >= 3:
+                        year = parts[0]
+                        month = parts[1].zfill(2)
+                        day = parts[2].zfill(2)
+                        formatted_date = f"{year}-{month}-{day}"
+                        blog_info['post_date'] = formatted_date
+                        print(f"✅ Posted date extracted and formatted: '{date_text}' -> '{formatted_date}'")
+                    else:
+                        blog_info['post_date'] = date_only
+                except Exception as e:
+                    print(f"⚠️ Error formatting date '{date_text}': {str(e)}")
+                    blog_info['post_date'] = date_only
 
         # 댓글 수 추출 (예: <em id="commentCount" class="_commentCount">3</em>)
         comment_count_elem = soup.select_one('em#commentCount._commentCount') or soup.select_one('#commentCount')
