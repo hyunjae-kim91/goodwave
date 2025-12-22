@@ -503,7 +503,6 @@ async def immediate_collection(campaign_id: int, db: Session = Depends(get_db)):
             
             # 블로그 즉시 수집 실행
             from app.services.scheduler_service import SchedulerService
-            from datetime import datetime, timedelta
             
             KST_OFFSET = timedelta(hours=9)
             collection_date = datetime.utcnow() + KST_OFFSET
