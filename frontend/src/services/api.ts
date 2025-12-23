@@ -3,9 +3,6 @@ import {
   Campaign,
   CampaignCreate,
   CampaignUpdate,
-  InstagramPost,
-  InstagramReel,
-  BlogPost,
   InstagramPostReport,
   InstagramReelReport,
   BlogReport,
@@ -18,6 +15,36 @@ const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 60000, // 60초로 증가 (대량 데이터 조회 시 타임아웃 방지)
 });
+
+// API 요청에 토큰 추가 (인터셉터)
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
+// 401 에러 시 자동 로그아웃
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('access_token');
+      localStorage.removeItem('username');
+      // 로그인 페이지로 리다이렉트
+      if (window.location.pathname !== '/login' && !window.location.pathname.startsWith('/shared') && !window.location.pathname.startsWith('/reports')) {
+        window.location.href = '/login';
+      }
+    }
+    return Promise.reject(error);
+  }
+);
 
 // Campaigns API
 export const campaignsApi = {

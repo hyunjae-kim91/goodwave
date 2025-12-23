@@ -4,12 +4,10 @@ import styled from 'styled-components';
 import { 
   BarChart2,
   Settings, 
-  Instagram, 
   Video, 
   Edit3,
   Users,
   Download,
-  Search,
   Tag,
   MessageSquare,
   PieChart,
@@ -160,6 +158,10 @@ const Navigation: React.FC = () => {
         <NavItem to="/admin/influencer/prompt" $isActive={isActive('/admin/influencer/prompt')} $isCollapsed={isCollapsed}>
           <MessageSquare size={16} />
           <span>프롬프트 관리</span>
+        </NavItem>
+        <NavItem to="/admin/users" $isActive={isActive('/admin/users')} $isCollapsed={isCollapsed}>
+          <Users size={16} />
+          <span>사용자 관리</span>
         </NavItem>
       </NavSection>
     </NavContainer>

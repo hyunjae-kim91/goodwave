@@ -717,6 +717,8 @@ const CombinedClassificationTab: React.FC = () => {
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   const [combinedSummary, setCombinedSummary] = useState<CombinedSummary | null>(null);
+  const [totalUsers, setTotalUsers] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
   const [individualReelData, setIndividualReelData] = useState<IndividualReelClassificationResponse | null>(null);
   const [showIndividualReels, setShowIndividualReels] = useState(false);
   const [deletingReelIds, setDeletingReelIds] = useState<number[]>([]);
@@ -724,31 +726,34 @@ const CombinedClassificationTab: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
-  const filteredUsers = useMemo(() => {
-    const term = userSearch.trim().toLowerCase();
-    if (!term) {
-      return users;
-    }
-    return users.filter(user => user.username.toLowerCase().includes(term));
-  }, [users, userSearch]);
-
-  // 페이지네이션: 검색어 변경 시 첫 페이지로 리셋
+  // 검색어 변경 시 첫 페이지로 리셋
   useEffect(() => {
     setCurrentPage(1);
   }, [userSearch]);
 
+  // 검색어나 페이지 변경 시 사용자 목록 로드
+  useEffect(() => {
+    loadUsers();
+  }, [currentPage, userSearch]);
 
   const loadUsers = async () => {
     try {
       setIsLoadingUsers(true);
-      const response = await fetch('/api/influencer/files/users');
+      const searchParam = userSearch.trim() ? `&search=${encodeURIComponent(userSearch.trim())}` : '';
+      const response = await fetch(`/api/influencer/files/users?page=${currentPage}&limit=${itemsPerPage}${searchParam}`);
       if (!response.ok) {
         throw new Error('사용자 목록을 불러오지 못했습니다');
       }
       const data = await response.json();
       const usersList = Array.isArray(data.users) ? data.users : [];
       
-      // 각 사용자의 분류 상태 확인
+      // 페이지네이션 정보 저장
+      if (data.total !== undefined) {
+        setTotalUsers(data.total);
+        setTotalPages(data.totalPages || Math.ceil(data.total / itemsPerPage));
+      }
+      
+      // 표시되는 사용자들의 분류 상태만 확인 (지연 로딩)
       const usersWithClassificationStatus = await Promise.all(
         usersList.map(async (user: UserData) => {
           try {
@@ -757,7 +762,6 @@ const CombinedClassificationTab: React.FC = () => {
             if (classificationResponse.ok) {
               const classificationData = await classificationResponse.json();
               // 릴스가 있고, 분류된 릴스가 있는지 확인
-              // subscription_motivation 또는 category에 classification 필드가 있으면 분류됨
               const hasClassifiedReels = classificationData.reels && classificationData.reels.some((reel: any) => {
                 const hasMotivation = reel.subscription_motivation && (
                   reel.subscription_motivation.classification || 
@@ -1065,15 +1069,43 @@ const CombinedClassificationTab: React.FC = () => {
   };
 
   const toggleAllUsers = () => {
-    if (selectedUsersForClassification.length === filteredUsers.length && filteredUsers.length > 0) {
+    if (selectedUsersForClassification.length === users.length && users.length > 0) {
       setSelectedUsersForClassification([]);
     } else {
-      setSelectedUsersForClassification(filteredUsers.map(user => user.username));
+      setSelectedUsersForClassification(users.map(user => user.username));
+    }
+  };
+
+  const handleDeleteSelectedUsers = async () => {
+    if (selectedUsersForClassification.length === 0) {
+      toast.error('삭제할 사용자를 먼저 선택하세요.');
+      return;
+    }
+    
+    const confirmed = window.confirm(
+      `선택한 ${selectedUsersForClassification.length}명의 사용자 계정을 삭제하시겠습니까?\n이 작업은 되돌릴 수 없습니다.`
+    );
+    
+    if (!confirmed) {
+      return;
+    }
+    
+    try {
+      setDeleteLoading(true);
+      await influencerApi.deleteUsers(selectedUsersForClassification);
+      toast.success(`${selectedUsersForClassification.length}명의 사용자를 삭제했습니다.`);
+      setSelectedUsersForClassification([]);
+      await loadUsers(); // 사용자 목록 새로고침
+    } catch (error: any) {
+      const message = error?.response?.data?.detail || error?.message || '사용자 삭제에 실패했습니다.';
+      toast.error(message);
+    } finally {
+      setDeleteLoading(false);
     }
   };
 
   const selectUnclassifiedUsers = () => {
-    const unclassifiedUsers = filteredUsers.filter(u => !u.isClassified).map(u => u.username);
+    const unclassifiedUsers = users.filter(u => !u.isClassified).map(u => u.username);
     setSelectedUsersForClassification(unclassifiedUsers);
   };
 
@@ -1439,7 +1471,7 @@ const CombinedClassificationTab: React.FC = () => {
   const categorySummaryText = formatTopEntriesLine(categoryTopEntries);
 
   // 통계 계산
-  const totalUsers = users.length;
+  const currentPageUserCount = users.length;
   const usersWithProfile = users.filter(u => u.followers !== null && u.followers !== undefined).length;
   const usersWithReels = users.filter(u => u.hasReels).length;
   const classifiedUsers = users.filter(u => u.isClassified).length;
@@ -1461,7 +1493,7 @@ const CombinedClassificationTab: React.FC = () => {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '1rem' }}>
               <Users size={32} style={{ color: '#2196f3' }} />
             </div>
-            <StatValue style={{ color: '#2196f3' }}>{totalUsers}</StatValue>
+            <StatValue style={{ color: '#2196f3' }}>{totalUsers || currentPageUserCount}</StatValue>
             <StatLabel>총 사용자</StatLabel>
           </StatCard>
           
@@ -1619,7 +1651,15 @@ const CombinedClassificationTab: React.FC = () => {
           </div>
           <Button onClick={toggleAllUsers}>
             <CheckCircle size={16} />
-            {selectedUsersForClassification.length === filteredUsers.length && filteredUsers.length > 0 ? '전체 해제' : '전체 선택'}
+            {selectedUsersForClassification.length === users.length && users.length > 0 ? '전체 해제' : '전체 선택'}
+          </Button>
+          <Button 
+            onClick={handleDeleteSelectedUsers} 
+            $variant="danger"
+            disabled={selectedUsersForClassification.length === 0 || deleteLoading}
+          >
+            <Trash2 size={16} />
+            {deleteLoading ? '삭제 중...' : `선택 삭제 (${selectedUsersForClassification.length})`}
           </Button>
           <Button onClick={selectUnclassifiedUsers} $variant="secondary">
             <CheckCircle size={16} />
@@ -1644,7 +1684,7 @@ const CombinedClassificationTab: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage).map(user => (
+              {users.map(user => (
                 <SelectionRow key={user.username}>
                   <SelectionCell>
                     <input
@@ -1717,7 +1757,7 @@ const CombinedClassificationTab: React.FC = () => {
           </SelectionTable>
         </div>
 
-        {filteredUsers.length === 0 && (
+        {users.length === 0 && !isLoadingUsers && (
           <EmptyPlaceholder>
             <Database size={48} style={{ marginBottom: '1rem', color: '#dee2e6' }} />
             <p>{userSearch ? '검색 결과가 없습니다.' : '사용자 목록이 없습니다.'}</p>
@@ -1725,7 +1765,7 @@ const CombinedClassificationTab: React.FC = () => {
         )}
 
         {/* 페이지네이션 */}
-        {filteredUsers.length > itemsPerPage && (
+        {totalPages > 1 && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', marginTop: '1rem' }}>
             <Button
               $variant="secondary"
@@ -1735,12 +1775,12 @@ const CombinedClassificationTab: React.FC = () => {
               이전
             </Button>
             <span style={{ fontSize: '0.875rem', color: '#495057' }}>
-              {currentPage} / {Math.ceil(filteredUsers.length / itemsPerPage)}
+              {currentPage} / {totalPages}
             </span>
             <Button
               $variant="secondary"
-              onClick={() => setCurrentPage(prev => Math.min(Math.ceil(filteredUsers.length / itemsPerPage), prev + 1))}
-              disabled={currentPage >= Math.ceil(filteredUsers.length / itemsPerPage)}
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage >= totalPages}
             >
               다음
             </Button>

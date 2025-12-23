@@ -13,14 +13,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 @router.get("/influencer/files/users")
-async def get_saved_users(db: Session = Depends(get_db)):
-    """저장된 인플루언서 사용자 목록을 반환합니다."""
+async def get_saved_users(
+    page: int = 1,
+    limit: int = 10,
+    search: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """저장된 인플루언서 사용자 목록을 반환합니다 (페이지네이션 지원)."""
     try:
-        # selectinload를 사용하여 관계 데이터를 즉시 로드
-        profiles = db.query(InfluencerProfile).options(
+        query = db.query(InfluencerProfile).options(
             selectinload(InfluencerProfile.influencer_posts),
             selectinload(InfluencerProfile.influencer_reels)
-        ).order_by(InfluencerProfile.updated_at.desc()).all()
+        )
+        
+        # 검색어가 있으면 필터링
+        if search and search.strip():
+            search_term = f"%{search.strip()}%"
+            query = query.filter(InfluencerProfile.username.ilike(search_term))
+        
+        # 전체 개수 조회
+        total_count = query.count()
+        
+        # 페이지네이션 적용
+        offset = (page - 1) * limit
+        profiles = query.order_by(InfluencerProfile.updated_at.desc()).offset(offset).limit(limit).all()
         
         users = []
         for profile in profiles:
@@ -40,7 +56,13 @@ async def get_saved_users(db: Session = Depends(get_db)):
             }
             users.append(user_info)
         
-        return {"users": users}
+        return {
+            "users": users,
+            "total": total_count,
+            "page": page,
+            "limit": limit,
+            "totalPages": (total_count + limit - 1) // limit
+        }
         
     except Exception as e:
         logger.error(f"사용자 목록 조회 중 오류: {str(e)}")

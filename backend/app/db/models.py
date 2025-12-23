@@ -6,6 +6,17 @@ from datetime import datetime
 
 Base = declarative_base()
 
+class User(Base):
+    """관리자 사용자 모델"""
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
 class Campaign(Base):
     __tablename__ = "campaigns"
     

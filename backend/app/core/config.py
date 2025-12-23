@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     backend_port: int = 8000
     frontend_url: str = "http://localhost:3000"
     
+    # IP Access Control
+    # 허용된 IP 주소 목록 (쉼표로 구분, 빈 문자열이면 모든 IP 허용)
+    # 예: "192.168.1.1,10.0.0.1" 또는 "192.168.1.0/24" (CIDR 표기법 지원)
+    allowed_ips: str = ""
+    # 보고서 API는 IP 제한 없이 공개 (기본값: True)
+    public_report_apis: bool = True
+    
     # Storage
     storage_provider: str = "s3"  # local or s3
     
